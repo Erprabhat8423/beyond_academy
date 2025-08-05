@@ -1,0 +1,25 @@
+from django.urls import path
+from . import views
+
+app_name = 'zoho_app'
+
+urlpatterns = [
+    # Webhook endpoints
+    path('webhook/zoho/contact/', views.handle_contact_webhook, name='contact_webhook'),
+    path('webhook/health/', views.health_check, name='health_check'),
+    
+    # ETL endpoints
+    path('api/etl/trigger/', views.trigger_etl_sync, name='trigger_etl'),
+    path('api/etl/status/', views.etl_status, name='etl_status'),
+    
+    # Test endpoints
+    path('webhook/manual-cv-extraction/<str:contact_id>/', views.manual_cv_extraction, name='manual_cv_extraction'),
+
+    
+    # Job matching endpoints
+    path('webhook/jobs/match/<str:contact_id>/', views.trigger_job_matching, name='trigger_job_matching'),
+    path('webhook/jobs/matches/<str:contact_id>/', views.get_job_matches, name='get_job_matches'),
+    
+    # Skills endpoints
+    path('webhook/skills/<str:contact_id>/', views.get_contact_skills, name='get_contact_skills'),
+]
