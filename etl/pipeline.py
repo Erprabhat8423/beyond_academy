@@ -5,7 +5,7 @@ from django.utils import timezone as django_timezone
 from django.db import transaction
 from django.db.utils import IntegrityError
 
-from zoho_app.models import Contact, Account, InternRole, SyncTracker
+from zoho_app.models import Contact, Account, InternRole, SyncTracker, Deal
 from zoho.api_client import ZohoClient
 
 # Configure logging
@@ -488,6 +488,61 @@ def sync_contacts(incremental=True):
         raise
 
 
+def sync_deals_for_account(zoho_client, account_id):
+    """Sync deals for a specific account"""
+    deal_fields = [
+        'id', 'Description', 'Deal_Name', 'Account_Name', 'Stage', 
+        'Start_date', 'End_date', 'Created_Time', 'Modified_Time'
+    ]
+    
+    try:
+        # Fetch deals for this account
+        deals_data = zoho_client.get_related_records(
+            module='Accounts',
+            record_id=account_id,
+            related_module='Deals',
+            fields=deal_fields
+        )
+        
+        deals_synced = 0
+        
+        for deal_data in deals_data:
+            try:
+                with transaction.atomic():
+                    # Parse and prepare deal data
+                    deal_fields_mapped = {
+                        'id': deal_data.get('id'),
+                        'deal_name': deal_data.get('Deal_Name'),
+                        'description': deal_data.get('Description'),
+                        'account_id': account_id,
+                        'account_name': extract_nested_name(deal_data.get('Account_Name')),
+                        'stage': deal_data.get('Stage'),
+                        'start_date': parse_datetime_field(deal_data.get('Start_date')),
+                        'end_date': parse_datetime_field(deal_data.get('End_date')),
+                        'created_time': parse_datetime_field(deal_data.get('Created_Time')),
+                        'modified_time': parse_datetime_field(deal_data.get('Modified_Time')),
+                    }
+                    
+                    # Create or update deal
+                    deal, created = Deal.objects.update_or_create(
+                        id=deal_fields_mapped['id'],
+                        defaults=deal_fields_mapped
+                    )
+                    
+                    deals_synced += 1
+                    
+            except Exception as e:
+                logger.error(f"Error processing deal {deal_data.get('id')} for account {account_id}: {str(e)}")
+                continue
+        
+        logger.info(f"Synced {deals_synced} deals for account {account_id}")
+        return deals_synced
+        
+    except Exception as e:
+        logger.error(f"Error fetching deals for account {account_id}: {str(e)}")
+        return 0
+
+
 def sync_accounts(incremental=True):
     """Sync accounts from Zoho CRM to Django database"""
     logger.info("Starting account sync...")
@@ -576,6 +631,8 @@ def sync_accounts(incremental=True):
                 with transaction.atomic():
                     # Parse and prepare account data - using field names from your working ETL
                     owner_data = account_data.get('Owner', {})
+                    tag_data = account_data.get('Tag')
+                    tag = list_to_json_string(tag_data) if tag_data else None
                     account_fields_mapped = {
                         # Core fields
                         'id': account_data.get('id'),
@@ -649,7 +706,8 @@ def sync_accounts(incremental=True):
                         'locked_for_me': account_data.get('$locked_for_me', False),
                         'is_duplicate': account_data.get('$is_duplicate', False),
                         'in_merge': account_data.get('$in_merge', False),
-                        'tag': list_to_json_string(account_data.get('Tag')),
+                        'tag': tag,
+                        'is_dnc': any("DNC" in str(item.get("name", "")) for item in tag_data if isinstance(item, dict)) if tag_data and isinstance(tag_data, list) else False,
                         'type': account_data.get('Type'),
                         
                         # Role and Opportunity fields (using correct field names)
@@ -669,6 +727,9 @@ def sync_accounts(incremental=True):
                         id=account_fields_mapped['id'],
                         defaults=account_fields_mapped
                     )
+                    
+                    # Sync deals for this account
+                    # deals_count = sync_deals_for_account(zoho, account_fields_mapped['id'])
                     
                     synced_count += 1
                     
@@ -830,6 +891,101 @@ def sync_intern_roles(incremental=True):
         raise
 
 
+def sync_deals(incremental=True):
+    """Sync all deals from Zoho CRM to Django database"""
+    logger.info("Starting deals sync...")
+    zoho = ZohoClient()
+    
+    # Determine sync criteria
+    criteria = None
+    last_sync_info = ""
+    
+    if incremental:
+        tracker = get_sync_tracker('deals')
+        if tracker.last_sync_timestamp:
+            criteria = build_incremental_criteria(tracker.last_sync_timestamp)
+            last_sync_info = f" (incremental since {tracker.last_sync_timestamp})"
+        else:
+            last_sync_info = " (full sync - no previous sync found)"
+    else:
+        last_sync_info = " (full sync - forced)"
+    
+    logger.info(f"Getting deal data from Zoho{last_sync_info}...")
+    
+    # Define fields to fetch
+    deal_fields = [
+        'id', 'Description', 'Deal_Name', 'Account_Name', 'Stage', 
+        'Start_date', 'End_date', 'Created_Time', 'Modified_Time'
+    ]
+    
+    try:
+        # Fetch data from Zoho
+        zoho_deals = zoho.get_paginated_data(
+            module='Deals',
+            fields=deal_fields,
+            criteria=criteria,
+            sort_by='Modified_Time',
+            sort_order='asc'
+        )
+        
+        logger.info(f"Retrieved {len(zoho_deals)} deals from Zoho")
+        
+        if not zoho_deals:
+            logger.info("No deals to sync")
+            return
+        
+        # Process deals
+        synced_count = 0
+        latest_modified = None
+        
+        for deal_data in zoho_deals:
+            try:
+                with transaction.atomic():
+                    # Parse and prepare deal data
+                    deal_fields_mapped = {
+                        'id': deal_data.get('id'),
+                        'deal_name': deal_data.get('Deal_Name'),
+                        'description': deal_data.get('Description'),
+                        'account_id': extract_nested_id(deal_data.get('Account_Name')),
+                        'account_name': extract_nested_name(deal_data.get('Account_Name')),
+                        'stage': deal_data.get('Stage'),
+                        'start_date': parse_datetime_field(deal_data.get('Start_date')),
+                        'end_date': parse_datetime_field(deal_data.get('End_date')),
+                        'created_time': parse_datetime_field(deal_data.get('Created_Time')),
+                        'modified_time': parse_datetime_field(deal_data.get('Modified_Time')),
+                    }
+                    
+                    # Create or update deal
+                    deal, created = Deal.objects.update_or_create(
+                        id=deal_fields_mapped['id'],
+                        defaults=deal_fields_mapped
+                    )
+                    
+                    synced_count += 1
+                    
+                    # Track latest modified time
+                    if deal_fields_mapped['modified_time']:
+                        if latest_modified is None or deal_fields_mapped['modified_time'] > latest_modified:
+                            latest_modified = deal_fields_mapped['modified_time']
+                    
+                    if synced_count % 100 == 0:
+                        logger.info(f"Processed {synced_count} deals...")
+                        
+            except Exception as e:
+                logger.error(f"Error processing deal {deal_data.get('id')}: {str(e)}")
+                continue
+        
+        # Update sync tracker
+        if latest_modified:
+            update_sync_tracker('deals', latest_modified, synced_count)
+        
+        logger.info(f"Deals sync completed successfully. Synced {synced_count} deals")
+        
+    except Exception as e:
+        logger.error(f"Error in deals sync: {str(e)}")
+        raise
+
+
 def run_full_etl_pipeline():
     """Run the complete ETL pipeline"""
     logger.info("Starting full ETL pipeline...")
@@ -837,8 +993,9 @@ def run_full_etl_pipeline():
     try:
         # Run all sync operations
         sync_contacts()
-        sync_accounts()
+        sync_accounts()  # This now includes deals for each account
         sync_intern_roles()
+        sync_deals()  # Additional standalone deals sync
         
         logger.info("✅ Full ETL pipeline completed successfully!")
         

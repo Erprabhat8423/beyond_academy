@@ -6,6 +6,7 @@ class SyncTracker(models.Model):
         ('contacts', 'Contacts'),
         ('accounts', 'Accounts'),
         ('intern_roles', 'Intern Roles'),
+        ('deals', 'Deals'),
     ]
     entity_type = models.CharField(max_length=50, choices=ENTITY_TYPE_CHOICES, unique=True)
     last_sync_timestamp = models.DateTimeField(null=True, blank=True)
@@ -231,6 +232,7 @@ class Account(models.Model):
     locked = models.BooleanField(default=False)
     company_address = models.TextField(blank=True, null=True)
     tag = models.TextField(blank=True, null=True)
+    is_dnc = models.BooleanField(default=False)
     approval_state = models.CharField(max_length=255, blank=True, null=True)
     pathfinder = models.BooleanField(default=False)
     location = models.CharField(max_length=255, blank=True, null=True)
@@ -271,6 +273,24 @@ class InternRole(models.Model):
 
     def __str__(self):
         return self.role_title or self.name
+
+
+class Deal(models.Model):
+    id = models.CharField(max_length=255, primary_key=True)
+    deal_name = models.CharField(max_length=255, blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    account_id = models.CharField(max_length=255, blank=True, null=True)
+    account_name = models.CharField(max_length=255, blank=True, null=True)
+    stage = models.CharField(max_length=255, blank=True, null=True)
+    start_date = models.DateTimeField(blank=True, null=True)
+    end_date = models.DateTimeField(blank=True, null=True)
+    created_time = models.DateTimeField(blank=True, null=True)
+    modified_time = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.deal_name or self.id
 
 
 class Document(models.Model):

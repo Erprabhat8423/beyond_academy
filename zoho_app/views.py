@@ -80,29 +80,29 @@ class ZohoWebhookHandler:
                 return {'status': 'error', 'message': 'No contact ID found'}
             
             # Step 1: Always fetch latest data from Zoho API to ensure full sync
-            logger.info(f"Fetching latest contact data from Zoho API for {contact_id}")
+            logger.info(f"Step 5. *********Fetching latest contact data from Zoho API for {contact_id}*********")
             full_contact_data = self.fetch_contact_from_api(contact_id)
             
             if full_contact_data:
                 # Use API data as the primary source (more complete and up-to-date)
                 contact_info = full_contact_data
-                logger.info(f"Using complete contact data from Zoho API for {contact_id}")
+                # logger.info(f"Using complete contact data from Zoho API for {contact_id}")
             else:
                 # Fallback to webhook data if API fetch fails
                 logger.warning(f"Could not fetch from API, using webhook data for contact {contact_id}")
             
             # Step 2: Always update local contact data with the most current information
-            logger.info(f"Syncing local contact data for {contact_id}")
+            logger.info(f"Step 6. *********Updating local contact data for {contact_id} *********")
             self.update_local_contact(contact_info)
             
             # Step 3: Sync related account data if contact has account association
             account_id = contact_info.get('Account_Name', {}).get('id') if isinstance(contact_info.get('Account_Name'), dict) else None
             if account_id:
-                logger.info(f"Syncing related account data for account {account_id}")
+                logger.info(f"Step 9. *********Syncing related account data for account {account_id} *********")
                 self.sync_related_account(account_id)
             
             # Step 4: Trigger incremental sync for intern roles to keep job data fresh
-            logger.info(f"Triggering incremental sync for intern roles")
+            logger.info(f"Step 12. *********Triggering incremental sync for intern roles *********")
             self.sync_intern_roles_incremental()
             
             # Check if this is a "Ready to Pitch" contact for CV processing
@@ -111,7 +111,7 @@ class ZohoWebhookHandler:
                 # Try alternate field names from webhook
                 role_success_stage = contact_info.get('role_success_stage', '').strip()
             
-            logger.info(f"Contact {contact_id} role_success_stage: '{role_success_stage}'")
+            logger.info(f"Step 14. *********Contact {contact_id} role_success_stage: '{role_success_stage}' *********")
             
             # If not "Ready to Pitch", just return success for data update
             if role_success_stage != 'Ready to Pitch':
@@ -121,7 +121,7 @@ class ZohoWebhookHandler:
                     'message': f'Contact data updated. Role stage "{role_success_stage}" - CV processing skipped'
                 }
             
-            logger.info(f"Processing Ready to Pitch contact: {contact_id}")
+            logger.info(f"Step 15. *********Processing Ready to Pitch contact: {contact_id}*********")
             
             # Start asynchronous processing for CV download and skill extraction
             self.start_async_processing(contact_id, contact_info)
@@ -149,7 +149,8 @@ class ZohoWebhookHandler:
                 contact_name = self.get_contact_full_name(contact_info)
                 
                 # Step 1: Download and manage CV files (includes duplicate cleanup)
-                logger.info(f"Step 1: Processing CVs for contact {contact_id} ('{contact_name}')")
+                logger.info(f"Step 15. *********Processing CVs for contact {contact_id} ('{contact_name}') *********")
+            
                 downloaded_files = self.process_cv_files(contact_id, contact_name)
                 
                 if not downloaded_files:
@@ -157,11 +158,11 @@ class ZohoWebhookHandler:
                     return
                 
                 # Step 2: Extract skills from downloaded CVs
-                logger.info(f"Step 2: Extracting skills for contact {contact_id}")
+                logger.info(f"Step 16. *********Extracting skills for contact {contact_id} ('{contact_name}') *********")
                 skills_extracted = self.extract_skills_from_cvs(contact_id, downloaded_files)
                 
                 # Step 3: Trigger job matching (in one hit as requested)
-                logger.info(f"Step 3: Matching jobs for contact {contact_id}")
+                logger.info(f"Step 17. *********Matching jobs for contact {contact_id} ('{contact_name}') *********")
                 match_result = match_jobs_for_contact(contact_id)
                 
                 logger.info(f"=== ASYNC PROCESSING COMPLETED FOR CONTACT {contact_id} ===")
@@ -266,7 +267,7 @@ class ZohoWebhookHandler:
                 "Content-Type": "application/json"
             }
             
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=120)
             response.raise_for_status()
             
             data = response.json()
@@ -355,7 +356,8 @@ class ZohoWebhookHandler:
             Extracted contact information or None
         """
         try:
-            logger.info(f"Extracting contact info from: {webhook_data}")
+            # logger.info(f"Extracting contact info from: {webhook_data}")
+            logger.info(f"Step 4. *********Extracting contact info from *********")
             
             # Handle form-encoded data from Zoho webhook (direct fields)
             if 'id' in webhook_data and 'name' in webhook_data:
@@ -367,7 +369,7 @@ class ZohoWebhookHandler:
                     'Phone': webhook_data.get('phone', ''),
                     'Company': webhook_data.get('company', ''),
                 }
-                logger.info(f"Extracted from form data: {contact_info}")
+                logger.info(f"Extracted from data: {contact_info}")
                 return contact_info
             
             # Handle JSON webhook data structure
@@ -439,7 +441,8 @@ class ZohoWebhookHandler:
                 # Try to find and update existing contact
                 try:
                     contact = Contact.objects.get(id=contact_id)
-                    logger.info(f"Updating existing contact {contact_id}")
+
+                    logger.info(f"Step 7. ********* Updating existing contact {contact_id} *********")
                     
                     # Update fields if provided in webhook/API data
                     if contact_info.get('Full_Name'):
@@ -472,10 +475,11 @@ class ZohoWebhookHandler:
                     # Update timestamp
                     contact.updated_time = timezone.now()
                     contact.save()
-                    logger.info(f"Successfully updated local contact {contact_id}")
+                    logger.info(f"Step 8. *********Successfully updated local contact {contact_id} *********")
                     
                 except Contact.DoesNotExist:
-                    logger.info(f"Contact {contact_id} not found locally - creating new record")
+                
+                    logger.info(f"Step 7. *********Contact {contact_id} not found locally - creating new record *********")
                     
                     # Prepare contact data for creation
                     full_name = contact_info.get('Full_Name')
@@ -511,8 +515,8 @@ class ZohoWebhookHandler:
                         created_time=timezone.now(),
                         updated_time=timezone.now()
                     )
-                    logger.info(f"Created new local contact {contact_id}")
-                    
+                    logger.info(f"Step 8. *********Successfully created new local contact {contact_id} *********")
+
                 return True
             else:
                 logger.warning("No contact ID provided for local update")
@@ -533,7 +537,7 @@ class ZohoWebhookHandler:
             True if sync was successful
         """
         try:
-            logger.info(f"Syncing account data for account {account_id}")
+            logger.info(f"Step 10. *********Syncing account data for account {account_id} *********")
             
             # Fetch account data from Zoho API
             account_data = self.fetch_account_from_api(account_id)
@@ -543,7 +547,8 @@ class ZohoWebhookHandler:
             
             # Update local account data
             self.update_local_account(account_data)
-            logger.info(f"Successfully synced account {account_id}")
+            logger.info(f"Step 11. *********Successfully synced account and update local data {account_id} *********")
+            
             return True
             
         except Exception as e:
@@ -569,8 +574,8 @@ class ZohoWebhookHandler:
                 "Authorization": f"Zoho-oauthtoken {get_access_token()}",
                 "Content-Type": "application/json"
             }
-            
-            response = requests.get(url, headers=headers)
+
+            response = requests.get(url, headers=headers, timeout=120)
             response.raise_for_status()
             
             data = response.json()
@@ -668,8 +673,7 @@ class ZohoWebhookHandler:
             
             # Use the existing ETL pipeline for incremental sync
             sync_intern_roles(incremental=True)
-            
-            logger.info("Incremental sync for intern roles completed")
+            logger.info(f"Step 13. *********Incremental sync for intern roles completed *********")
             return True
             
         except Exception as e:
@@ -771,9 +775,8 @@ def get_webhook_handler():
 def handle_contact_webhook(request):
     """Handle Zoho contact webhook notifications"""
     try:
-        # Log incoming webhook details
-        logger.info(f"=== WEBHOOK RECEIVED ===")
-        
+
+        logger.info(f"Step 1. *********Webhook trigger received *********")
         # Parse request body based on content type
         webhook_data = None
         if request.content_type == 'application/json':
@@ -788,13 +791,14 @@ def handle_contact_webhook(request):
             webhook_data = {}
             for key, values in parsed_data.items():
                 webhook_data[key] = unquote(values[0]) if values else ''
-                
-            logger.info(f"Parsed form data: {webhook_data}")
+            
+            logger.info(f"Step 2. *********Parsed form data received *********")
         else:
-            logger.error(f"Unsupported content type: {request.content_type}")
+            # logger.error(f"Unsupported content type: {request.content_type}")
             return JsonResponse({'error': 'Unsupported content type'}, status=400)
         
-        logger.info(f"Parsed webhook data: {json.dumps(webhook_data, indent=2)[:500]}...")
+        logger.info(f"Step 3. *********Parsed webhook data received *********")
+        logger.info(f"data: {json.dumps(webhook_data, indent=2)[:500]}...")
         
         # Verify signature if provided
         signature = request.headers.get('X-Zoho-Signature')

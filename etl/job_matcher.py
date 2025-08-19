@@ -266,7 +266,7 @@ class JobMatcher:
         if industry_match:
             score += 0.4 * min(1.0, len(matched_industries) / 3.0)
         
-        # Location match (25% weight)
+        # Location match (15% weight)
         if location_match:
             score += 0.15
         
@@ -274,10 +274,10 @@ class JobMatcher:
         if work_policy_match:
             score += 0.20
         
-        # Skill match (15% weight)
+        # Skill match (25% weight)
         if skill_match:
-            score += 0.25* min(1.0, len(matched_skills) / 5.0)
-        
+            score += 0.25 * min(1.0, len(matched_skills) / 5.0)
+
         return min(1.0, score)  # Cap at 1.0
     
     def find_matches_for_contact(self, contact_id: str) -> List[Dict[str, Any]]:

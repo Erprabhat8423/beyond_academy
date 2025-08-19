@@ -1,5 +1,9 @@
 import requests
+import time
+import logging
 from .auth import get_access_token
+
+logger = logging.getLogger(__name__)
 
 
 class ZohoClient:
@@ -7,8 +11,14 @@ class ZohoClient:
     Zoho CRM API client for fetching data from different modules
     """
     
-    def __init__(self):
+    def __init__(self, timeout=60, max_retries=3):
         self.base_url = "https://www.zohoapis.com/crm/v2"
+        self.timeout = timeout  # Connection and read timeout in seconds
+        self.max_retries = max_retries
+        
+        # Create a session for connection pooling and better performance
+        self.session = requests.Session()
+        
         self.headers = {
             "Authorization": f"Zoho-oauthtoken {get_access_token()}",
             "Content-Type": "application/json"
@@ -47,15 +57,50 @@ class ZohoClient:
         all_data = []
 
         while True:
-            response = requests.get(url, headers=self.headers, params=params)
-            response.raise_for_status()
-            data = response.json().get('data', [])
-            if not data:
-                break
-            all_data.extend(data)
-            if not response.json().get('info', {}).get('more_records'):
-                break
-            params["page"] += 1
+            # Retry logic for network issues
+            for attempt in range(self.max_retries):
+                try:
+                    # logger.info(f"Fetching {module} data - Page {params['page']}, Attempt {attempt + 1}")
+                    response = self.session.get(
+                        url, 
+                        headers=self.headers, 
+                        params=params, 
+                        timeout=self.timeout
+                    )
+                    response.raise_for_status()
+                    
+                    data = response.json().get('data', [])
+                    if not data:
+                        logger.info(f"No more data found for {module} on page {params['page']}")
+                        return all_data
+                        
+                    all_data.extend(data)
+                    logger.info(f"Retrieved {len(data)} records from {module} (page {params['page']}, total so far: {len(all_data)})")
+                    
+                    if not response.json().get('info', {}).get('more_records'):
+                        logger.info(f"Completed fetching {module} data - Total records: {len(all_data)}")
+                        return all_data
+                        
+                    params["page"] += 1
+                    break  # Success, exit retry loop
+                    
+                except requests.exceptions.Timeout as e:
+                    logger.warning(f"Timeout on attempt {attempt + 1} for {module} page {params['page']}: {e}")
+                    if attempt == self.max_retries - 1:
+                        logger.error(f"Max retries exceeded for {module} page {params['page']}")
+                        raise
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    
+                except requests.exceptions.ConnectionError as e:
+                    logger.warning(f"Connection error on attempt {attempt + 1} for {module} page {params['page']}: {e}")
+                    if attempt == self.max_retries - 1:
+                        logger.error(f"Max retries exceeded for {module} page {params['page']}")
+                        raise
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"Request error for {module} page {params['page']}: {e}")
+                    raise
 
         return all_data
 
@@ -71,7 +116,7 @@ class ZohoClient:
         """
         try:
             url = f"{self.base_url}/Contacts/{contact_id}"
-            response = requests.get(url, headers=self.headers)
+            response = self.session.get(url, headers=self.headers, timeout=self.timeout)
             response.raise_for_status()
             
             data = response.json().get('data', [])
@@ -80,7 +125,7 @@ class ZohoClient:
             return None
             
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching contact {contact_id}: {e}")
+            logger.error(f"Error fetching contact {contact_id}: {e}")
             return None
 
     def get_attachments(self, module, record_id):
@@ -96,11 +141,60 @@ class ZohoClient:
         """
         try:
             url = f"{self.base_url}/{module}/{record_id}/actions/download_photo"
-            response = requests.get(url, headers=self.headers)
+            response = self.session.get(url, headers=self.headers, timeout=self.timeout)
             response.raise_for_status()
             return response.json().get('data', [])
         except Exception as e:
-            print(f"Error fetching attachments for {record_id}: {e}")
+            logger.error(f"Error fetching attachments for {record_id}: {e}")
+            return []
+
+    def get_related_records(self, module, record_id, related_module, fields=None):
+        """
+        Get related records for a specific record (e.g., Deals for an Account)
+        
+        Args:
+            module: Primary module name (e.g., 'Accounts')
+            record_id: ID of the primary record
+            related_module: Related module name (e.g., 'Deals')
+            fields: List of fields to fetch from related records
+            
+        Returns:
+            List of related records
+        """
+        try:
+            url = f"{self.base_url}/{module}/{record_id}/{related_module}"
+            params = {}
+            
+            if fields:
+                params["fields"] = ",".join(fields)
+            
+            response = self.session.get(url, headers=self.headers, params=params, timeout=self.timeout)
+            response.raise_for_status()
+            
+            # Handle empty response
+            response_text = response.text.strip()
+            if not response_text:
+                logger.debug(f"Empty response for {related_module} records for {module} {record_id}")
+                return []
+            
+            try:
+                response_data = response.json()
+            except ValueError as e:
+                logger.warning(f"Invalid JSON response for {related_module} records for {module} {record_id}: {response_text[:100]}")
+                return []
+            
+            data = response_data.get('data', [])
+            if data:
+                logger.info(f"Retrieved {len(data)} {related_module} records for {module} {record_id}")
+            else:
+                logger.debug(f"No {related_module} records found for {module} {record_id}")
+            return data
+            
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Request error fetching {related_module} for {module} {record_id}: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error fetching {related_module} for {module} {record_id}: {e}")
             return []
 
     def download_attachment(self, attachment_url):
@@ -114,9 +208,10 @@ class ZohoClient:
             File content as bytes or None
         """
         try:
-            response = requests.get(attachment_url, headers=self.headers)
+            # Use longer timeout for file downloads
+            response = self.session.get(attachment_url, headers=self.headers, timeout=self.timeout * 2)
             response.raise_for_status()
             return response.content
         except Exception as e:
-            print(f"Error downloading attachment: {e}")
+            logger.error(f"Error downloading attachment: {e}")
             return None

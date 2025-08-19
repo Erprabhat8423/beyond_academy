@@ -15,6 +15,6 @@ def get_access_token():
         'client_secret': os.getenv("ZOHO_CLIENT_SECRET"),
         'grant_type': 'refresh_token'
     }
-    response = requests.post(url, data=payload)
+    response = requests.post(url, data=payload, timeout=120)
     response.raise_for_status()
     return response.json()['access_token']
