@@ -249,7 +249,7 @@ class ZohoWebhookHandler:
     
     def fetch_contact_from_api(self, contact_id: str) -> Optional[dict]:
         """
-        Fetch complete contact data from Zoho API
+        Fetch complete contact data from Zoho API with rate limiting protection
         
         Args:
             contact_id: Zoho contact ID
@@ -281,6 +281,13 @@ class ZohoWebhookHandler:
                 logger.warning(f"No contact data found for {contact_id}")
                 return None
                 
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429 or (e.response.status_code == 400 and "too many requests" in str(e).lower()):
+                logger.warning(f"Rate limited when fetching contact {contact_id} - will continue with webhook data")
+                return None
+            else:
+                logger.error(f"HTTP error fetching contact {contact_id} from API: {e}")
+                return None
         except Exception as e:
             logger.error(f"Error fetching contact {contact_id} from API: {e}")
             return None
@@ -557,7 +564,7 @@ class ZohoWebhookHandler:
     
     def fetch_account_from_api(self, account_id: str) -> Optional[dict]:
         """
-        Fetch account data from Zoho API
+        Fetch account data from Zoho API with rate limiting protection
         
         Args:
             account_id: Zoho account ID
@@ -589,6 +596,13 @@ class ZohoWebhookHandler:
                 logger.warning(f"No account data found for {account_id}")
                 return None
                 
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429 or (e.response.status_code == 400 and "too many requests" in str(e).lower()):
+                logger.warning(f"Rate limited when fetching account {account_id} - skipping account sync")
+                return None
+            else:
+                logger.error(f"HTTP error fetching account {account_id} from API: {e}")
+                return None
         except Exception as e:
             logger.error(f"Error fetching account {account_id} from API: {e}")
             return None

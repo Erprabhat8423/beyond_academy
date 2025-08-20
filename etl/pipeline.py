@@ -5,7 +5,7 @@ from django.utils import timezone as django_timezone
 from django.db import transaction
 from django.db.utils import IntegrityError
 
-from zoho_app.models import Contact, Account, InternRole, SyncTracker, Deal
+from zoho_app.models import Contact, Account, InternRole, SyncTracker, Deal, ContactDeal
 from zoho.api_client import ZohoClient
 
 # Configure logging
@@ -463,6 +463,9 @@ def sync_contacts(incremental=True):
                         defaults=contact_fields_mapped
                     )
                     
+                    # Sync contact deals for this contact
+                    # deals_count = sync_deals_for_contact(zoho, contact_fields_mapped['id'])
+                    
                     synced_count += 1
                     
                     # Track latest modified time
@@ -540,6 +543,70 @@ def sync_deals_for_account(zoho_client, account_id):
         
     except Exception as e:
         logger.error(f"Error fetching deals for account {account_id}: {str(e)}")
+        return 0
+
+
+def sync_deals_for_contact(zoho_client, contact_id):
+    """Sync deals for a specific contact using ContactDeal model"""
+    deal_fields = [
+        'id', 'Description', 'Deal_Name', 'Account_Name', 'Stage', 
+        'Closing_Date', 'Type', 'Start_date', 'End_date', 
+        'Created_Time', 'Modified_Time', 'Created_By'
+    ]
+    
+    try:
+        # Fetch deals for this contact
+        deals_data = zoho_client.get_related_records(
+            module='Contacts',
+            record_id=contact_id,
+            related_module='Deals',
+            fields=deal_fields
+        )
+        
+        deals_synced = 0
+        
+        for deal_data in deals_data:
+            try:
+                with transaction.atomic():
+                    # Parse and prepare deal data
+                    created_by_data = deal_data.get('Created_By', {})
+                    deal_fields_mapped = {
+                        'id': deal_data.get('id'),
+                        'deal_name': deal_data.get('Deal_Name'),
+                        'description': deal_data.get('Description'),
+                        'contact_id': contact_id,  # Set the contact_id for this deal
+                        'account_id': extract_nested_id(deal_data.get('Account_Name')),
+                        'account_name': extract_nested_name(deal_data.get('Account_Name')),
+                        'stage': deal_data.get('Stage'),
+                        'deal_type': deal_data.get('Type'),
+                        'closing_date': parse_datetime_field(deal_data.get('Closing_Date')),
+                        'start_date': parse_datetime_field(deal_data.get('Start_date')),
+                        'end_date': parse_datetime_field(deal_data.get('End_date')),
+                        'created_time': parse_datetime_field(deal_data.get('Created_Time')),
+                        'modified_time': parse_datetime_field(deal_data.get('Modified_Time')),
+                        'created_by_id': extract_nested_id(created_by_data),
+                        'created_by_name': extract_nested_name(created_by_data),
+                        'created_by_email': extract_nested_email(created_by_data),
+                    }
+                    
+                    # Create or update contact deal
+                    contact_deal, created = ContactDeal.objects.update_or_create(
+                        id=deal_fields_mapped['id'],
+                        defaults=deal_fields_mapped
+                    )
+                    
+                    deals_synced += 1
+                    
+            except Exception as e:
+                logger.error(f"Error processing contact deal {deal_data.get('id')} for contact {contact_id}: {str(e)}")
+                continue
+        
+        if deals_synced > 0:
+            logger.info(f"Synced {deals_synced} contact deals for contact {contact_id}")
+        return deals_synced
+        
+    except Exception as e:
+        logger.error(f"Error fetching contact deals for contact {contact_id}: {str(e)}")
         return 0
 
 
@@ -986,16 +1053,49 @@ def sync_deals(incremental=True):
         raise
 
 
+def sync_contact_deals():
+    """Sync deals for all contacts separately using ContactDeal model"""
+    logger.info("Starting contact deals sync...")
+    zoho = ZohoClient()
+    
+    try:
+        # Get all contacts
+        contacts = Contact.objects.filter(lead_created_time__icontains='2025')
+        total_contacts = contacts.count()
+        total_deals_synced = 0
+        
+        logger.info(f"Syncing contact deals for {total_contacts} contacts...")
+        
+        for i, contact in enumerate(contacts, 1):
+            try:
+                deals_count = sync_deals_for_contact(zoho, contact.id)
+                total_deals_synced += deals_count
+                
+                if i % 100 == 0:
+                    logger.info(f"Processed {i}/{total_contacts} contacts, synced {total_deals_synced} contact deals so far...")
+                    
+            except Exception as e:
+                logger.error(f"Error syncing contact deals for contact {contact.id}: {str(e)}")
+                continue
+        
+        logger.info(f"Contact deals sync completed. Synced {total_deals_synced} contact deals for {total_contacts} contacts")
+        
+    except Exception as e:
+        logger.error(f"Error in contact deals sync: {str(e)}")
+        raise
+
+
 def run_full_etl_pipeline():
     """Run the complete ETL pipeline"""
     logger.info("Starting full ETL pipeline...")
     
     try:
         # Run all sync operations
-        sync_contacts()
+        sync_contacts()  # This now includes contact deals for each contact
         sync_accounts()  # This now includes deals for each account
         sync_intern_roles()
         sync_deals()  # Additional standalone deals sync
+        sync_contact_deals()  # Dedicated contact deals sync
         
         logger.info("✅ Full ETL pipeline completed successfully!")
         

@@ -75,7 +75,7 @@ class ZohoClient:
                         return all_data
                         
                     all_data.extend(data)
-                    logger.info(f"Retrieved {len(data)} records from {module} (page {params['page']}, total so far: {len(all_data)})")
+                    # logger.info(f"Retrieved {len(data)} records from {module} (page {params['page']}, total so far: {len(all_data)})")
                     
                     if not response.json().get('info', {}).get('more_records'):
                         logger.info(f"Completed fetching {module} data - Total records: {len(all_data)}")

@@ -7,15 +7,23 @@ Matching criteria:
 - Student Location = Job Location
 - Work Policy = Hybrid/In-office (unless student is remote, then remote only)
 - Skills matching (optional enhancement)
+- Start date priority: +0.10 score bonus if candidate's start date falls within 2 weeks before confirmed role end date
+
+Enhanced filtering criteria:
+1. Exclude companies with is_dnc = True
+2. Exclude companies with empty, today, or past follow_up_date (include only future dates)
+3. Exclude companies where Intern-to-employee ratio > 1:4 (based on confirmed deals vs employee count)
+4. Exclude companies with more than 3 active deals (Scheduling/Interviewing/Pending Outcome stages)
 """
 import json
 import logging
 from typing import List, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, date
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Count
+from django.utils import timezone
 
-from zoho_app.models import Contact, InternRole, JobMatch, Skill
+from zoho_app.models import Contact, InternRole, JobMatch, Skill, Account, Deal
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -254,9 +262,164 @@ class JobMatcher:
         
         return len(matched_skills) > 0, matched_skills
     
+    def check_company_dnc_status(self, role: InternRole) -> bool:
+        """
+        Check if the company associated with the role has is_dnc = True
+        Returns True if company should be excluded (is_dnc = True)
+        """
+        if not role.intern_company_id:
+            return False
+        
+        try:
+            account = Account.objects.get(id=role.intern_company_id)
+            return account.is_dnc
+        except Account.DoesNotExist:
+            logger.warning(f"Account {role.intern_company_id} not found for role {role.id}")
+            return False
+    
+    def check_company_follow_up_date(self, role: InternRole) -> bool:
+        """
+        Check if company's follow_up_date is valid (future date from today)
+        Returns True if company should be excluded (empty, today, or past date)
+        """
+        if not role.intern_company_id:
+            return False
+        
+        try:
+            account = Account.objects.get(id=role.intern_company_id)
+            if not account.follow_up_date:
+                return True  # Exclude if follow_up_date is empty
+            
+            today = timezone.now().date()
+            follow_up_date = account.follow_up_date.date() if hasattr(account.follow_up_date, 'date') else account.follow_up_date
+            
+            return follow_up_date <= today  # Exclude if today or past date
+            
+        except Account.DoesNotExist:
+            logger.warning(f"Account {role.intern_company_id} not found for role {role.id}")
+            return False
+    
+    def check_intern_to_employee_ratio(self, role: InternRole) -> bool:
+        """
+        Check if Intern-to-employee ratio ≤ 1:4
+        Returns True if company should be excluded (ratio > 1:4)
+        """
+        if not role.intern_company_id:
+            return False
+        
+        try:
+            account = Account.objects.get(id=role.intern_company_id)
+            
+            # Get employee count from account
+            if not account.no_employees:
+                return True  # Exclude if no employee count available
+            
+            try:
+                employee_count = int(account.no_employees)
+            except (ValueError, TypeError):
+                return True  # Exclude if employee count is not a valid number
+            
+            # Count "Role Confirmed" deals for this company
+            # Assuming deals with stage containing "confirmed" or "role confirmed"
+            confirmed_deals_count = Deal.objects.filter(
+                account_id=role.intern_company_id,
+                stage__icontains='Role Confirmed'
+            ).count()
+            
+            # If no confirmed deals, ratio is good
+            if confirmed_deals_count == 0:
+                return False
+            
+            # Calculate ratio: confirmed_deals : employee_count
+            # We want ratio ≤ 1:4, which means confirmed_deals/employee_count ≤ 1/4
+            ratio = confirmed_deals_count / employee_count
+            
+            # Exclude if ratio > 1:4 (0.25)
+            return ratio > 0.25
+            
+        except Account.DoesNotExist:
+            logger.warning(f"Account {role.intern_company_id} not found for role {role.id}")
+            return False
+        except Exception as e:
+            logger.error(f"Error checking intern-to-employee ratio for role {role.id}: {e}")
+            return False
+    
+    def check_active_deals_limit(self, role: InternRole) -> bool:
+        """
+        Check if company has more than 3 active deals in Scheduling/Interviewing/Pending Outcome stages
+        Returns True if company should be excluded (more than 3 active deals)
+        """
+        if not role.intern_company_id:
+            return False
+        
+        try:
+            # Count active deals in the specified stages
+            active_deals_count = Deal.objects.filter(
+                account_id=role.intern_company_id,
+                stage__in=['Scheduling Interview', 'Pending Interview','Rescheduling Interview', 'Pending Outcome']
+            ).count()
+            
+            # Also check for case-insensitive partial matches
+            if active_deals_count == 0:
+                active_deals_count = Deal.objects.filter(
+                    Q(account_id=role.intern_company_id) &
+                    (Q(stage__icontains='Scheduling Interview') | 
+                     Q(stage__icontains='Pending Interview') | 
+                     Q(stage__icontains='Rescheduling Interview') |
+                     Q(stage__icontains='Pending Outcome'))
+                ).count()
+            
+            # Exclude if more than 3 active deals
+            return active_deals_count > 3
+            
+        except Exception as e:
+            logger.error(f"Error checking active deals limit for role {role.id}: {e}")
+            return False
+    
+    def check_start_date_priority(self, contact: Contact, role: InternRole) -> bool:
+        """
+        Check if candidate's start date falls within 2 weeks before any confirmed role's end date for the company
+        Returns True if the candidate should be prioritized (start date within 2 weeks of any confirmed role end date)
+        """
+        if not contact.start_date or not role.intern_company_id:
+            return False
+        
+        try:
+            # Convert contact start date to date object if needed
+            contact_start_date = contact.start_date.date() if hasattr(contact.start_date, 'date') else contact.start_date
+            
+            # Get all confirmed deals for this company
+            confirmed_deals = Deal.objects.filter(
+                account_id=role.intern_company_id,
+                stage__icontains='Role Confirmed'
+            )
+            
+            # Check if contact's start date is within 2 weeks of any confirmed role's end date
+            from datetime import timedelta
+            
+            for deal in confirmed_deals:
+                if deal.end_date:
+                    # Convert deal end date to date object if needed
+                    deal_end_date = deal.end_date.date() if hasattr(deal.end_date, 'date') else deal.end_date
+                    
+                    # Calculate the date 2 weeks (14 days) before the deal end date
+                    two_weeks_before_end = deal_end_date - timedelta(days=14)
+                    
+                    # Check if contact's start date is within 2 weeks before the deal end date
+                    # and not after the deal end date
+                    if two_weeks_before_end <= contact_start_date <= deal_end_date:
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking start date priority for contact {contact.id} and role {role.id}: {e}")
+            return False
+    
     def calculate_match_score(self, industry_match: bool, location_match: bool, 
                             work_policy_match: bool, skill_match: bool,
-                            matched_industries: List[str], matched_skills: List[str]) -> float:
+                            matched_industries: List[str], matched_skills: List[str],
+                            start_date_priority: bool = False) -> float:
         """
         Calculate overall match score based on different criteria
         """
@@ -277,12 +440,16 @@ class JobMatcher:
         # Skill match (25% weight)
         if skill_match:
             score += 0.25 * min(1.0, len(matched_skills) / 5.0)
+        
+        # Start date priority bonus (0.10 if within 2 weeks of confirmed role end date)
+        if start_date_priority:
+            score += 0.10
 
         return min(1.0, score)  # Cap at 1.0
     
     def find_matches_for_contact(self, contact_id: str) -> List[Dict[str, Any]]:
         """
-        Find all potential matches for a given contact
+        Find all potential matches for a given contact with enhanced filtering criteria
         """
         try:
             contact = Contact.objects.get(id=contact_id)
@@ -299,14 +466,40 @@ class JobMatcher:
         matches = []
         
         # Get all active intern roles
-        roles = InternRole.objects.filter(
-            Q(role_status__isnull=True) | 
-            ~Q(role_status__icontains='closed') &
-            ~Q(role_status__icontains='cancelled')
-        )
-        
+        roles = InternRole.objects.filter(role_status__icontains="Active",id = "4078552000229311006")
+
         for role in roles:
+            
+            print(f"*****************************{role.id}*****************************")
             try:
+                # Enhanced filtering criteria
+                
+                # 1. Check if company has is_dnc = True (exclude if True)
+                if self.check_company_dnc_status(role):
+                    logger.info(f"Excluding role {role.id} - company is DNC")
+                    print("DNC")
+                    continue
+                
+                # 2. Check if company follow_up_date is empty, today, or past (exclude if True)
+                if self.check_company_follow_up_date(role):
+                    logger.info(f"Excluding role {role.id} - invalid follow_up_date")
+                    print("Follow up date")
+                    continue
+                
+                # 3. Check if intern-to-employee ratio > 1:4 (exclude if True)
+                if self.check_intern_to_employee_ratio(role):
+                    logger.info(f"Excluding role {role.id} - intern-to-employee ratio exceeded")
+                    print("Intern to employee ratio")
+                    continue
+                
+                # 4. Check if company has more than 3 active deals (exclude if True)
+                if self.check_active_deals_limit(role):
+                    logger.info(f"Excluding role {role.id} - too many active deals")
+                    print("Active deals limit")
+                    continue
+                
+                # Existing matching criteria
+                
                 # Check industry match
                 role_tags = self.get_role_tags(role)
                 industry_match, matched_industries = self.check_industry_match(contact_interests, role_tags)
@@ -320,12 +513,15 @@ class JobMatcher:
                 # Check skill match
                 skill_match, matched_skills = self.check_skill_match(contact_id, role)
                 
+                # Check start date priority (within 2 weeks of confirmed role end date)
+                start_date_priority = self.check_start_date_priority(contact, role)
+                
                 # Calculate overall score
                 match_score = self.calculate_match_score(
                     industry_match, location_match, work_policy_match, skill_match,
-                    matched_industries, matched_skills
+                    matched_industries, matched_skills, start_date_priority
                 )
-                
+                print(f"Match score for contact {contact_id} with role {role.id}: {match_score:.2f}")
                 # Only include matches with some score
                 if match_score > 0.1:  # 10% minimum threshold
                     match_reason_parts = []
@@ -337,6 +533,8 @@ class JobMatcher:
                         match_reason_parts.append("Work policy compatible")
                     if skill_match:
                         match_reason_parts.append(f"Skills: {', '.join(matched_skills[:3])}")
+                    if start_date_priority:
+                        match_reason_parts.append("Start date priority (+0.10)")
                     
                     matches.append({
                         'contact_id': contact_id,
@@ -346,6 +544,7 @@ class JobMatcher:
                         'location_match': location_match,
                         'work_policy_match': work_policy_match,
                         'skill_match': skill_match,
+                        'start_date_priority': start_date_priority,
                         'matched_industries': matched_industries,
                         'matched_skills': matched_skills,
                         'match_reason': '; '.join(match_reason_parts),
@@ -360,7 +559,7 @@ class JobMatcher:
         # Sort matches by score descending
         matches.sort(key=lambda x: x['match_score'], reverse=True)
         
-        logger.info(f"Found {len(matches)} matches for contact {contact_id}")
+        logger.info(f"Found {len(matches)} matches for contact {contact_id} after enhanced filtering")
         return matches
     
     def store_matches(self, matches: List[Dict[str, Any]]) -> int:

@@ -1,7 +1,7 @@
 import logging
 from django.core.management.base import BaseCommand
 from django.utils import timezone
-from etl.pipeline import sync_contacts, sync_accounts, sync_intern_roles, sync_deals
+from etl.pipeline import sync_contacts, sync_accounts, sync_intern_roles, sync_deals, sync_contact_deals
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,11 @@ class Command(BaseCommand):
             '--deals-only',
             action='store_true',
             help='Sync only deals',
+        )
+        parser.add_argument(
+            '--contact-deals-only',
+            action='store_true',
+            help='Sync only contact deals',
         )
 
     def handle(self, *args, **options):
@@ -75,6 +80,13 @@ class Command(BaseCommand):
                     self.style.SUCCESS("✅ Deals sync completed successfully")
                 )
                 
+            elif options['contact_deals_only']:
+                self.stdout.write("Syncing contact deals only...")
+                sync_contact_deals()
+                self.stdout.write(
+                    self.style.SUCCESS("✅ Contact deals sync completed successfully")
+                )
+                
             else:
                 # Run full pipeline
                 self.stdout.write(f"Running {sync_type} sync for all entities...")
@@ -94,6 +106,10 @@ class Command(BaseCommand):
                 self.stdout.write("Step 4: Syncing deals...")
                 sync_deals(incremental=incremental)
                 self.stdout.write(self.style.SUCCESS("✅ Deals sync completed"))
+                
+                self.stdout.write("Step 5: Syncing contact deals...")
+                sync_contact_deals()
+                self.stdout.write(self.style.SUCCESS("✅ Contact deals sync completed"))
                 
             end_time = timezone.now()
             duration = end_time - start_time
