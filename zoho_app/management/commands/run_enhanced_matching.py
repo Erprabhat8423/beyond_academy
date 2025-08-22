@@ -75,7 +75,7 @@ class Command(BaseCommand):
             result = match_jobs_for_contact(contact_id, min_score)
             
             if result['status'] == 'success':
-                self.stdout.write(f"✅ Matching completed successfully!")
+                self.stdout.write(f" Matching completed successfully!")
                 self.stdout.write(f"   Total potential matches: {result['total_matches']}")
                 self.stdout.write(f"   Quality matches (>= {min_score}): {result['quality_matches']}")
                 self.stdout.write(f"   Matches created: {result['matches_created']}")
@@ -139,7 +139,7 @@ class Command(BaseCommand):
             total_matches_created += batch_result['total_matches_created']
             
             # Show batch results
-            self.stdout.write(f"   ✅ Successful: {batch_result['successful_matches']}")
+            self.stdout.write(f"    Successful: {batch_result['successful_matches']}")
             self.stdout.write(f"   ❌ Failed: {batch_result['failed_matches']}")
             self.stdout.write(f"   🎲 Matches created: {batch_result['total_matches_created']}")
             
@@ -154,7 +154,7 @@ class Command(BaseCommand):
         # Final summary
         self.stdout.write(f"\n🎉 Enhanced Job Matching Complete!")
         self.stdout.write(f"   📊 Contacts processed: {processed}")
-        self.stdout.write(f"   ✅ Successful: {successful_contacts}")
+        self.stdout.write(f"    Successful: {successful_contacts}")
         self.stdout.write(f"   ❌ Failed: {failed_contacts}")
         self.stdout.write(f"   🎲 Total matches created: {total_matches_created}")
         self.stdout.write(f"   📈 Average matches per successful contact: {total_matches_created / max(successful_contacts, 1):.1f}")

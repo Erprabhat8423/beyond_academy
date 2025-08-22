@@ -56,7 +56,7 @@ class Command(BaseCommand):
                 
                 self.stdout.write(
                     self.style.SUCCESS(
-                        f"✅ Downloaded {len(downloaded_files)} CV files for contact {contact_id}"
+                        f" Downloaded {len(downloaded_files)} CV files for contact {contact_id}"
                     )
                 )
                 
@@ -89,7 +89,7 @@ class Command(BaseCommand):
                             contacts_with_cvs += 1
                             total_files_downloaded += len(downloaded_files)
                             self.stdout.write(
-                                f"  ✅ Downloaded {len(downloaded_files)} CV files"
+                                f"   Downloaded {len(downloaded_files)} CV files"
                             )
                         else:
                             self.stdout.write("  ℹ️ No CV files found")

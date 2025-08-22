@@ -44,7 +44,7 @@ class ProductionETLRunner:
             
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"✅ ETL completed successfully")
+                logger.info(f" ETL completed successfully")
                 logger.info(f"Duration: {result.get('duration', 'N/A')}")
                 logger.info(f"Results: {result.get('results', {})}")
                 return result
@@ -73,7 +73,7 @@ class ProductionETLRunner:
             
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"✅ Full ETL completed successfully")
+                logger.info(f" Full ETL completed successfully")
                 logger.info(f"Duration: {result.get('duration', 'N/A')}")
                 logger.info(f"Results: {result.get('results', {})}")
                 return result

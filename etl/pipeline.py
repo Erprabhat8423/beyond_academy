@@ -271,7 +271,6 @@ def sync_contacts(incremental=True):
         for contact_data in zoho_contacts:
             try:
                 with transaction.atomic():
-                    # Parse and prepare contact data - comprehensive mapping using correct Zoho field names
                     contact_fields_mapped = {
                         # Core fields
                         'id': contact_data.get('id'),
@@ -311,17 +310,17 @@ def sync_contacts(incremental=True):
                         'date_of_birth': parse_datetime_field(contact_data.get('Date_of_Birth')),
                         
                         # Placement and Role fields
-                        'placement_status': contact_data.get('Placement_status'),  # Note: lowercase 'status'
-                        'start_date': parse_datetime_field(contact_data.get('Start_date')),  # Note: lowercase 'date'
-                        'end_date': parse_datetime_field(contact_data.get('End_date')),  # Note: lowercase 'date'
+                        'placement_status': contact_data.get('Placement_status'),
+                        'start_date': parse_datetime_field(contact_data.get('Start_date')),
+                        'end_date': parse_datetime_field(contact_data.get('End_date')),
                         'role_success_stage': contact_data.get('Role_Success_Stage'),
                         'role_owner': extract_nested_name(contact_data.get('Role_Owner')),
                         'role_success_notes': contact_data.get('Role_Success_Notes'),
-                        'role_confirmed_date': parse_datetime_field(contact_data.get('Role_confirmed_date')),  # Note: lowercase
+                        'role_confirmed_date': parse_datetime_field(contact_data.get('Role_confirmed_date')),
                         'paid_role': contact_data.get('Paid_Role'),
-                        'likelihood_to_convert': contact_data.get('Likelihood_to_convert'),  # Note: lowercase
+                        'likelihood_to_convert': contact_data.get('Likelihood_to_convert'),
                         'job_title': contact_data.get('Job_Title'),
-                        'job_offered_after': contact_data.get('Job_offered_after'),  # Note: lowercase
+                        'job_offered_after': contact_data.get('Job_offered_after'),
                         
                         # Contact and Communication fields
                         'link_to_cv': contact_data.get('Link_to_CV'),
@@ -330,7 +329,7 @@ def sync_contacts(incremental=True):
                         'do_not_contact': contact_data.get('Do_Not_Contact', False),
                         'email_opt_out': contact_data.get('Email_Opt_Out', False),
                         'unsubscribed_time': parse_datetime_field(contact_data.get('Unsubscribed_Time')),
-                        'follow_up_date': parse_datetime_field(contact_data.get('Follow_up_Date')),  # Note: lowercase 'up'
+                        'follow_up_date': parse_datetime_field(contact_data.get('Follow_up_Date')),
                         
                         # Personal Information
                         'gender': contact_data.get('Gender'),
@@ -342,15 +341,15 @@ def sync_contacts(incremental=True):
                         'visa_eligible': contact_data.get('Visa_Eligible'),
                         'requires_a_visa': contact_data.get('Requires_a_visa'),
                         'visa_type_exemption': contact_data.get('Visa_Type_Exemption'),
-                        'visa_successful': contact_data.get('Visa_successful'),  # Note: lowercase
+                        'visa_successful': contact_data.get('Visa_successful'),
                         'visa_alt_options': list_to_json_string(contact_data.get('Visa_Alt_Options')),
-                        'visa_notes': contact_data.get('Visa_Note_s'),  # Note: different field name
+                        'visa_notes': contact_data.get('Visa_Note_s'),
                         'visa_owner': extract_nested_name(contact_data.get('Visa_Owner')),
                         'visa_f_u_date': parse_datetime_field(contact_data.get('Visa_F_U_Date')),
-                        'arrival_date_time': parse_datetime_field(contact_data.get('Arrival_date_time')),  # Note: lowercase
-                        'departure_date_time': parse_datetime_field(contact_data.get('Departure_date_time')),  # Note: lowercase
-                        'departure_flight_number': contact_data.get('Departure_flight_number'),  # Note: lowercase
-                        'arrival_drop_off_address': contact_data.get('Arrival_drop_off_address'),  # Note: lowercase
+                        'arrival_date_time': parse_datetime_field(contact_data.get('Arrival_date_time')),
+                        'departure_date_time': parse_datetime_field(contact_data.get('Departure_date_time')),
+                        'departure_flight_number': contact_data.get('Departure_flight_number'),
+                        'arrival_drop_off_address': contact_data.get('Arrival_drop_off_address'),
                         
                         # Interview and Assessment fields
                         'interview': contact_data.get('Interview'),
@@ -360,46 +359,46 @@ def sync_contacts(incremental=True):
                         'intro_call_date': parse_datetime_field(contact_data.get('Intro_Call_Date')),
                         'call_scheduled_date_time': parse_datetime_field(contact_data.get('Call_Scheduled_Date_Time')),
                         'call_booked_date_time': parse_datetime_field(contact_data.get('Call_Booked_Date_Time')),
-                        'call_to_conversion_time_days': contact_data.get('Call_to_Conversion_Time_days'),  # Note: lowercase 'days'
+                        'call_to_conversion_time_days': contact_data.get('Call_to_Conversion_Time_days'),
                         'enrolment_to_intro_call_lead_time': contact_data.get('Enrolment_to_Intro_Call_Lead_Time'),
                         
                         # Approval and Process fields (using $ prefixes for system fields)
                         'approval': json.dumps(contact_data.get('$approval')) if contact_data.get('$approval') else None,
-                        'approval_date': parse_datetime_field(contact_data.get('Approval_date')),  # Note: lowercase 'date'
+                        'approval_date': parse_datetime_field(contact_data.get('Approval_date')),
                         'approval_state': contact_data.get('$approval_state'),
                         'process_flow': contact_data.get('$process_flow', False),
                         'review': json.dumps(contact_data.get('$review')) if contact_data.get('$review') else None,
                         'review_process': json.dumps(contact_data.get('$review_process')) if contact_data.get('$review_process') else None,
-                        'student_decision': contact_data.get('Student_decision'),  # Note: lowercase 'decision'
-                        'company_decision': contact_data.get('Company_decision'),  # Note: lowercase 'decision'
+                        'student_decision': contact_data.get('Student_decision'),
+                        'company_decision': contact_data.get('Company_decision'),
                         
                         # Administrative fields (using proper field names with suffixes)
                         'layout_id': extract_nested_id(contact_data.get('Layout')),
                         'layout_display_label': contact_data.get('Layout', {}).get('display_label') if contact_data.get('Layout') else None,
                         'layout_name': contact_data.get('Layout', {}).get('name') if contact_data.get('Layout') else None,
                         'field_states': json.dumps(contact_data.get('$field_states')) if contact_data.get('$field_states') else None,
-                        'record_status': contact_data.get('Record_Status__s'),  # Note: __s suffix
+                        'record_status': contact_data.get('Record_Status__s'),
                         'last_activity_time': parse_datetime_field(contact_data.get('Last_Activity_Time')),
-                        'last_enriched_time': parse_datetime_field(contact_data.get('Last_Enriched_Time__s')),  # Note: __s suffix
+                        'last_enriched_time': parse_datetime_field(contact_data.get('Last_Enriched_Time__s')),
                         'lead_created_time': parse_datetime_field(contact_data.get('Lead_Created_Time')),
-                        'change_log_time': parse_datetime_field(contact_data.get('Change_Log_Time__s')),  # Note: __s suffix
+                        'change_log_time': parse_datetime_field(contact_data.get('Change_Log_Time__s')),
                         'created_by_email': extract_nested_email(contact_data.get('Created_By')),
                         
                         # Partnership and Organization fields
                         'partner_organisation': contact_data.get('Partner_Organisation'),
-                        'from_university_partner': contact_data.get('From_University_partner'),  # Note: lowercase 'partner'
+                        'from_university_partner': contact_data.get('From_University_partner'),
                         'community_owner': extract_nested_name(contact_data.get('Community_Owner')),
                         'admission_member': contact_data.get('Admission_Member'),
                         'ps_assigned_date': parse_datetime_field(contact_data.get('PS_Assigned_Date')),
                         
                         # Accommodation fields
                         'accommodation_finalised': contact_data.get('Accommodation_finalised'),
-                        'house_rules': contact_data.get('House_rules'),  # Note: lowercase 'rules'
+                        'house_rules': contact_data.get('House_rules'),
                         
                         # Financial and Agreement fields
                         'signed_agreement': contact_data.get('Signed_Agreement'),
                         'agreement_finalised': contact_data.get('Agreement_finalised'),
-                        'books_cust_id': contact_data.get('books_cust_id'),  # Note: lowercase
+                        'books_cust_id': contact_data.get('books_cust_id'),
                         'other_payment_status': contact_data.get('Other_Payment_Status'),
                         'total': contact_data.get('Total'),
                         't_c_link': contact_data.get('T_C_Link'),
@@ -410,8 +409,8 @@ def sync_contacts(incremental=True):
                         'number_of_days': contact_data.get('Number_of_Days'),
                         'days_count': contact_data.get('Days_Count'),
                         'days_since_conversion': contact_data.get('Days_Since_Conversion'),
-                        'average_no_of_days': contact_data.get('Average_no_of_days'),  # Note: lowercase
-                        'placement_lead_time_days': contact_data.get('Placement_Lead_Time_days'),  # Note: lowercase 'days'
+                        'average_no_of_days': contact_data.get('Average_no_of_days'),
+                        'placement_lead_time_days': contact_data.get('Placement_Lead_Time_days'),
                         'placement_deadline': parse_datetime_field(contact_data.get('Placement_Deadline')),
                         'placement_urgency': contact_data.get('Placement_Urgency'),
                         'decision_date': parse_datetime_field(contact_data.get('Decision_Date')),
@@ -422,7 +421,7 @@ def sync_contacts(incremental=True):
                         'cancellation_notes': contact_data.get('Cancellation_Notes'),
                         'cancelled_date_time': parse_datetime_field(contact_data.get('Cancelled_Date_Time')),
                         'date_of_cancellation': parse_datetime_field(contact_data.get('Date_of_Cancellation')),
-                        'refund_date': parse_datetime_field(contact_data.get('Refund_date')),  # Note: lowercase 'date'
+                        'refund_date': parse_datetime_field(contact_data.get('Refund_date')),
                         
                         # Rating and Feedback
                         'rating': list_to_json_string(contact_data.get('Rating')),
@@ -433,20 +432,20 @@ def sync_contacts(incremental=True):
                         'utm_campaign': contact_data.get('UTM_Campaign'),
                         'utm_medium': contact_data.get('UTM_Medium'),
                         'utm_content': contact_data.get('UTM_Content'),
-                        'utm_gclid': contact_data.get('UTM_GCLID'),  # Note: GCLID not Gclid
+                        'utm_gclid': contact_data.get('UTM_GCLID'),
                         
                         # Other fields
                         'description': contact_data.get('Description'),
                         'additional_information': contact_data.get('Additional_Information'),
                         'notes1': contact_data.get('Notes1'),
                         'name1': contact_data.get('Name1'),
-                        'other_industry': contact_data.get('Other_industry'),  # Note: lowercase 'industry'
+                        'other_industry': contact_data.get('Other_industry'),
                         'token': contact_data.get('Token'),
                         'tag': list_to_json_string(contact_data.get('Tag')),
                         'type': contact_data.get('Type'),
-                        'enrich_status': contact_data.get('Enrich_Status__s'),  # Note: __s suffix
+                        'enrich_status': contact_data.get('Enrich_Status__s'),
                         'is_duplicate': contact_data.get('$is_duplicate', False),
-                        'locked': contact_data.get('Locked__s', False),  # Note: __s suffix
+                        'locked': contact_data.get('Locked__s', False),
                         'locked_for_me': contact_data.get('$locked_for_me', False),
                         'in_merge': contact_data.get('$in_merge', False),
                         
@@ -574,7 +573,7 @@ def sync_deals_for_contact(zoho_client, contact_id):
                         'id': deal_data.get('id'),
                         'deal_name': deal_data.get('Deal_Name'),
                         'description': deal_data.get('Description'),
-                        'contact_id': contact_id,  # Set the contact_id for this deal
+                        'contact_id': contact_id,
                         'account_id': extract_nested_id(deal_data.get('Account_Name')),
                         'account_name': extract_nested_name(deal_data.get('Account_Name')),
                         'stage': deal_data.get('Stage'),
@@ -638,39 +637,39 @@ def sync_accounts(incremental=True):
         'Owner', 'Modified_Time', 'Created_Time',
         
         # Company and Business fields  
-        'Company_Work_Policy', 'Company_Industry', 'Company_Desciption',  # Note: typo in original
-        'Company_Industry_Other', 'No_Employees', 'Standard_working_hours',  # Note: lowercase
-        'Company_Address', 'Industry_areas',  # Note: lowercase
+        'Company_Work_Policy', 'Company_Industry', 'Company_Desciption',
+        'Company_Industry_Other', 'No_Employees', 'Standard_working_hours',
+        'Company_Address', 'Industry_areas',
         
         # Location fields
-        'Location', 'Location_other', 'City', 'Postcode', 'Country',  # Note: lowercase 'other'
+        'Location', 'Location_other', 'City', 'Postcode', 'Country',
         'Street', 'State_Region',
         
         # University fields
         'Uni_Region', 'Uni_Country', 'Uni_State_if_in_US', 'Uni_Timezone',
         
         # Status and Management fields (using correct field names)
-        'Management_Status', 'Approval_status', 'Account_Status', 'Record_Status__s',  # Note: __s suffix
+        'Management_Status', 'Approval_status', 'Account_Status', 'Record_Status__s',
         'Cleanup_Status', 'Cleanup_Phase', 'Uni_Outreach_Status',
-        'Placement_s_Revision_Required', 'Due_Diligence_Fields_to_Revise',  # Note: 's_' in middle
+        'Placement_s_Revision_Required', 'Due_Diligence_Fields_to_Revise',
         
         # Process and Review fields (with $ prefixes for system fields)
         '$process_flow', '$review', '$review_process', '$approval_state',
-        'Enrich_Status__s', 'Gold_Rating', 'Classic_Partnership', '$pathfinder',  # Note: __s suffix and $ prefixes
+        'Enrich_Status__s', 'Gold_Rating', 'Classic_Partnership', '$pathfinder',
         
         # Dates and Timeline
         'Cleanup_Start_Date', 'Last_Activity_Time', 'Last_Full_Due_Diligence_Date',
-        'Follow_up_Date', 'Next_Reply_Date',  # Note: lowercase 'up'
+        'Follow_up_Date', 'Next_Reply_Date',
         
         # Administrative fields (with proper system field prefixes and suffixes)
-        'Layout', '$field_states', 'Locked__s', '$locked_for_me', '$is_duplicate', '$in_merge',  # Note: Layout not Layout_ID
+        'Layout', '$field_states', 'Locked__s', '$locked_for_me', '$is_duplicate', '$in_merge',
         'Tag', 'Type',
         
         # Role and Opportunity fields
-        'Roles_available', 'Roles', 'Upon_to_Remote_interns',  # Note: lowercase variations
+        'Roles_available', 'Roles', 'Upon_to_Remote_interns',  
         
         # Notes and Documentation
-        'Outreach_Notes', 'Account_Notes', 'Cleanup_Notes', '$approval'  # Note: $ prefix for approval
+        'Outreach_Notes', 'Account_Notes', 'Cleanup_Notes', '$approval'  
     ]
     
     try:
@@ -714,16 +713,16 @@ def sync_accounts(incremental=True):
                         # Company and Business fields (using exact field names from your working ETL)
                         'company_work_policy': list_to_json_string(account_data.get('Company_Work_Policy')),
                         'company_industry': account_data.get('Company_Industry'),
-                        'company_description': account_data.get('Company_Desciption'),  # Note: typo in Zoho field name
+                        'company_description': account_data.get('Company_Desciption'),
                         'company_industry_other': account_data.get('Company_Industry_Other'),
                         'no_employees': account_data.get('No_Employees'),
-                        'standard_working_hours': account_data.get('Standard_working_hours'),  # Note: lowercase
+                        'standard_working_hours': account_data.get('Standard_working_hours'),
                         'company_address': account_data.get('Company_Address'),
-                        'industry_areas': account_data.get('Industry_areas'),  # Note: lowercase
+                        'industry_areas': account_data.get('Industry_areas'),
                         
                         # Location fields (using exact field names)
                         'location': account_data.get('Location'),
-                        'location_other': account_data.get('Location_other'),  # Note: lowercase 'other'
+                        'location_other': account_data.get('Location_other'),
                         'city': account_data.get('City'),
                         'postcode': account_data.get('Postcode'),
                         'country': account_data.get('Country'),
@@ -738,13 +737,13 @@ def sync_accounts(incremental=True):
                         
                         # Status and Management fields (using correct field names with suffixes)
                         'management_status': account_data.get('Management_Status'),
-                        'approval_status': account_data.get('Approval_status'),  # Note: lowercase 'status'
+                        'approval_status': account_data.get('Approval_status'),
                         'account_status': account_data.get('Account_Status'),
-                        'record_status': account_data.get('Record_Status__s'),  # Note: __s suffix
+                        'record_status': account_data.get('Record_Status__s'),
                         'cleanup_status': account_data.get('Cleanup_Status'),
                         'cleanup_phase': account_data.get('Cleanup_Phase'),
                         'uni_outreach_status': account_data.get('Uni_Outreach_Status'),
-                        'placement_revision_required': account_data.get('Placement_s_Revision_Required'),  # Note: 's_' in middle
+                        'placement_revision_required': account_data.get('Placement_s_Revision_Required'),
                         'due_diligence_fields_to_revise': list_to_json_string(account_data.get('Due_Diligence_Fields_to_Revise')),
                         
                         # Process and Review fields (using $ prefixes for system fields)
@@ -752,24 +751,24 @@ def sync_accounts(incremental=True):
                         'review': account_data.get('$review'),
                         'review_process': json.dumps(account_data.get('$review_process')) if account_data.get('$review_process') else None,
                         'approval_state': account_data.get('$approval_state'),
-                        'enrich_status': account_data.get('Enrich_Status__s'),  # Note: __s suffix
+                        'enrich_status': account_data.get('Enrich_Status__s'),
                         'gold_rating': account_data.get('Gold_Rating', False),
                         'classic_partnership': account_data.get('Classic_Partnership'),
-                        'pathfinder': account_data.get('$pathfinder', False),  # Note: $ prefix
+                        'pathfinder': account_data.get('$pathfinder', False),
                         
                         # Dates and Timeline
                         'cleanup_start_date': parse_datetime_field(account_data.get('Cleanup_Start_Date')),
                         'last_activity_time': parse_datetime_field(account_data.get('Last_Activity_Time')),
                         'last_full_due_diligence_date': parse_datetime_field(account_data.get('Last_Full_Due_Diligence_Date')),
-                        'follow_up_date': parse_datetime_field(account_data.get('Follow_up_Date')),  # Note: lowercase 'up'
+                        'follow_up_date': parse_datetime_field(account_data.get('Follow_up_Date')),
                         'next_reply_date': parse_datetime_field(account_data.get('Next_Reply_Date')),
                         
                         # Administrative fields (using proper system field prefixes and suffixes)
-                        'layout_id': extract_nested_id(account_data.get('Layout')),  # Note: Layout not Layout_ID
+                        'layout_id': extract_nested_id(account_data.get('Layout')),
                         'layout_display_label': account_data.get('Layout', {}).get('display_label') if account_data.get('Layout') else None,
                         'layout_name': account_data.get('Layout', {}).get('name') if account_data.get('Layout') else None,
                         'field_states': json.dumps(account_data.get('$field_states')) if account_data.get('$field_states') else None,
-                        'locked': account_data.get('Locked__s', False),  # Note: __s suffix
+                        'locked': account_data.get('Locked__s', False),
                         'locked_for_me': account_data.get('$locked_for_me', False),
                         'is_duplicate': account_data.get('$is_duplicate', False),
                         'in_merge': account_data.get('$in_merge', False),
@@ -778,15 +777,15 @@ def sync_accounts(incremental=True):
                         'type': account_data.get('Type'),
                         
                         # Role and Opportunity fields (using correct field names)
-                        'roles_available': account_data.get('Roles_available'),  # Note: lowercase 'available'
+                        'roles_available': account_data.get('Roles_available'),
                         'roles': account_data.get('Roles'),
-                        'upon_to_remote_interns': account_data.get('Upon_to_Remote_interns', False),  # Note: lowercase 'interns'
+                        'upon_to_remote_interns': account_data.get('Upon_to_Remote_interns', False),
                         
                         # Notes and Documentation (using correct field names)
                         'outreach_notes': account_data.get('Outreach_Notes'),
                         'account_notes': account_data.get('Account_Notes'),
                         'cleanup_notes': account_data.get('Cleanup_Notes'),
-                        'approval': json.dumps(account_data.get('$approval')) if account_data.get('$approval') else None,  # Note: $ prefix
+                        'approval': json.dumps(account_data.get('$approval')) if account_data.get('$approval') else None,
                     }
                     
                     # Create or update account
@@ -830,7 +829,7 @@ def sync_intern_roles(incremental=True):
     zoho = ZohoClient()
     
     # Custom module - using the exact module name from your working ETL
-    module_name = 'Intern_Roles'  # Your ETL uses this instead of 'Deals'
+    module_name = 'Intern_Roles'
     
     # Determine sync criteria
     criteria = None
@@ -856,15 +855,15 @@ def sync_intern_roles(incremental=True):
         'Role_Tags', 'Start_Date', 'End_Date', 'Created_Time', 'Modified_Time',
         
         # Company relationship field
-        'Intern_Company',  # Your ETL uses this field name
+        'Intern_Company',
         
         # Work and Location fields
         'Company_Work_Policy', 'Location', 'Open_to_Remote',
         
         # Status and Management fields (with proper suffixes)
-        'Due_Diligence_Status_2', 'Account_Outreach_Status', 'Record_Status__s',  # Note: __s suffix
+        'Due_Diligence_Status_2', 'Account_Outreach_Status', 'Record_Status__s',
         'Approval_State', 'Management_Status', 'Placement_Fields_to_Revise',
-        'Placement_Revision_Notes', 'Gold_Rating', 'Locked__s'  # Note: __s suffix
+        'Placement_Revision_Notes', 'Gold_Rating', 'Locked__s'
     ]
     
     try:
@@ -895,7 +894,7 @@ def sync_intern_roles(incremental=True):
                     role_fields_mapped = {
                         # Core fields (using exact field names from your working ETL)
                         'id': role_data.get('id'),
-                        'name': role_data.get('Name'),  # Note: 'Name' not 'Deal_Name'
+                        'name': role_data.get('Name'),
                         'role_title': role_data.get('Role_Title'),
                         'role_description_requirements': role_data.get('Role_Description_Requirements'),
                         'role_status': role_data.get('Role_Status'),
@@ -917,13 +916,13 @@ def sync_intern_roles(incremental=True):
                         # Status and Management fields (using exact field names with suffixes)
                         'due_diligence_status_2': role_data.get('Due_Diligence_Status_2'),
                         'account_outreach_status': role_data.get('Account_Outreach_Status'),
-                        'record_status': role_data.get('Record_Status__s'),  # Note: __s suffix
+                        'record_status': role_data.get('Record_Status__s'),
                         'approval_state': role_data.get('Approval_State'),
                         'management_status': role_data.get('Management_Status'),
                         'placement_fields_to_revise': list_to_json_string(role_data.get('Placement_Fields_to_Revise')),
                         'placement_revision_notes': role_data.get('Placement_Revision_Notes'),
                         'gold_rating': role_data.get('Gold_Rating', False),
-                        'locked': role_data.get('Locked__s', False),  # Note: __s suffix
+                        'locked': role_data.get('Locked__s', False),
                     }
                     
                     # Create or update intern role
@@ -1097,7 +1096,7 @@ def run_full_etl_pipeline():
         sync_deals()  # Additional standalone deals sync
         sync_contact_deals()  # Dedicated contact deals sync
         
-        logger.info("✅ Full ETL pipeline completed successfully!")
+        logger.info(" Full ETL pipeline completed successfully!")
         
     except Exception as e:
         logger.error(f"❌ ETL pipeline failed: {str(e)}")

@@ -351,6 +351,19 @@ class Skill(models.Model):
         return f"{self.skill_name} - {self.skill_category}"
 
 
+class RoleDealSync(models.Model):
+    """
+    Track deal syncing for intern roles to avoid unnecessary API calls
+    """
+    intern_role_id = models.CharField(max_length=255, unique=True)
+    total_rejected_deals = models.IntegerField(default=0)
+    last_sync_date = models.DateField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Role {self.intern_role_id} - {self.total_rejected_deals} rejected deals (synced: {self.last_sync_date})"
+
+
 class JobMatch(models.Model):
     contact_id = models.CharField(max_length=255)
     intern_role_id = models.CharField(max_length=255)

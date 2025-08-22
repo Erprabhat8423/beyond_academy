@@ -17,7 +17,7 @@ python3 production_etl.py incremental >> $LOG_FILE 2>&1
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -eq 0 ]; then
-    echo "[$DATE] ✅ Incremental ETL completed successfully" >> $LOG_FILE
+    echo "[$DATE]  Incremental ETL completed successfully" >> $LOG_FILE
 else
     echo "[$DATE] ❌ Incremental ETL failed with exit code $EXIT_CODE" >> $LOG_FILE
     

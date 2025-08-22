@@ -17,13 +17,24 @@ Enhanced filtering criteria:
 """
 import json
 import logging
+import os
+import time
 from typing import List, Dict, Any, Tuple
 from datetime import datetime, date
 from django.db import transaction
 from django.db.models import Q, Count
 from django.utils import timezone
+from difflib import SequenceMatcher
+from zoho_app.models import Contact, InternRole, JobMatch, Skill, Account, Deal, ContactDeal, RoleDealSync
+import requests
+import re
+from zoho import auth
 
-from zoho_app.models import Contact, InternRole, JobMatch, Skill, Account, Deal
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -35,7 +46,255 @@ class JobMatcher:
     """
     
     def __init__(self):
-        pass
+        # Initialize OpenAI client for industry matching
+        self.client = None
+        if OPENAI_AVAILABLE:
+            openai_api_key = os.getenv('OPENAI_API_KEY')
+            if openai_api_key:
+                try:
+                    self.client = openai.OpenAI(api_key=openai_api_key)
+                    logger.info("OpenAI client initialized for industry matching")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize OpenAI client: {e}")
+            else:
+                logger.warning("OPENAI_API_KEY not found in environment variables")
+        else:
+            logger.warning("OpenAI package not available. Using fallback matching method.")
+    
+    
+    def validate_api_access(self, intern_role_id: str) -> bool:
+        """
+        Validate if we can access the role and its basic information
+        """
+        try:
+            access_token = auth.get_access_token()
+            if not access_token:
+                return False
+            
+            # Test basic role access first
+            api_url = f"https://www.zohoapis.com/crm/v2/Intern_Roles/{intern_role_id}"
+            headers = {
+                'Authorization': f'Zoho-oauthtoken {access_token}',
+                'Content-Type': 'application/json'
+            }
+            
+            response = requests.get(api_url, headers=headers, timeout=10)
+            if response.status_code == 404:
+                logger.warning(f"Role {intern_role_id} not found in Zoho CRM")
+                return False
+            elif response.status_code == 403:
+                logger.error(f"Access denied for role {intern_role_id} - check permissions")
+                return False
+            elif not response.ok:
+                logger.error(f"API error {response.status_code} for role {intern_role_id}")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating API access for role {intern_role_id}: {e}")
+            return False
+
+    def sync_role_deals(self, intern_role_id: str) -> int:
+        """
+        Sync deals for a specific intern role and return count of rejected/closed deals
+        """
+        today = date.today()
+        
+        # Check if we already have synced data for today
+        try:
+            existing_sync = RoleDealSync.objects.get(intern_role_id=intern_role_id)
+            if existing_sync.last_sync_date == today:
+                logger.debug(f"Using cached deal count for role {intern_role_id}: {existing_sync.total_rejected_deals}")
+                return existing_sync.total_rejected_deals
+        except RoleDealSync.DoesNotExist:
+            pass
+        
+        # Fetch deals from Zoho API
+        access_token = auth.get_access_token()
+        if not access_token:
+            logger.error(f"Could not get access token for role {intern_role_id}")
+            # Update sync record with 0 count for missing token
+            RoleDealSync.objects.update_or_create(
+                intern_role_id=intern_role_id,
+                defaults={
+                    'total_rejected_deals': 0,
+                    'last_sync_date': today
+                }
+            )
+            return 0
+        
+        # Validate API access before making deals request
+        if not self.validate_api_access(intern_role_id):
+            logger.warning(f"Cannot access role {intern_role_id} - skipping deal sync")
+            RoleDealSync.objects.update_or_create(
+                intern_role_id=intern_role_id,
+                defaults={
+                    'total_rejected_deals': 0,
+                    'last_sync_date': today
+                }
+            )
+            return 0
+        
+        api_url = f"https://www.zohoapis.com/crm/v2/Intern_Roles/{intern_role_id}/Deals"
+        headers = {
+            'Authorization': f'Zoho-oauthtoken {access_token}',
+            'Content-Type': 'application/json'
+        }
+        params = {
+            'fields': 'Deal_Name,Account_Name,Stage,Type'
+        }
+        
+        try:
+            # Add small delay to avoid rate limiting
+            time.sleep(0.1)
+            
+            logger.debug(f"Making API request to: {api_url}")
+            response = requests.get(api_url, headers=headers, params=params, timeout=30)
+            
+            logger.debug(f"API response status: {response.status_code}")
+            logger.debug(f"API response headers: {dict(response.headers)}")
+            
+            # Check response status first
+            if response.status_code == 204:  # No Content
+                logger.info(f"No deals found for role {intern_role_id} (status 204)")
+                RoleDealSync.objects.update_or_create(
+                    intern_role_id=intern_role_id,
+                    defaults={
+                        'total_rejected_deals': 0,
+                        'last_sync_date': today
+                    }
+                )
+                return 0
+            
+            response.raise_for_status()
+            
+            # Check if response has content
+            response_text = response.text.strip()
+            if not response_text:
+                logger.debug(f"Empty response from API for role {intern_role_id} - no deals associated")
+                # Update sync record with 0 count for empty response
+                RoleDealSync.objects.update_or_create(
+                    intern_role_id=intern_role_id,
+                    defaults={
+                        'total_rejected_deals': 0,
+                        'last_sync_date': today
+                    }
+                )
+                return 0
+            
+            # Check for common error responses
+            if response_text.lower().startswith('<!doctype') or response_text.lower().startswith('<html'):
+                logger.error(f"Received HTML error page for role {intern_role_id}")
+                RoleDealSync.objects.update_or_create(
+                    intern_role_id=intern_role_id,
+                    defaults={
+                        'total_rejected_deals': 0,
+                        'last_sync_date': today
+                    }
+                )
+                return 0
+            
+            try:
+                data = response.json()
+            except json.JSONDecodeError as json_error:
+                logger.error(f"Invalid JSON response for role {intern_role_id}: {json_error}")
+                logger.error(f"Response content (first 500 chars): {response_text[:500]}")
+                
+                # Update sync record with 0 count for invalid JSON
+                RoleDealSync.objects.update_or_create(
+                    intern_role_id=intern_role_id,
+                    defaults={
+                        'total_rejected_deals': 0,
+                        'last_sync_date': today
+                    }
+                )
+                return 0
+            
+            # Check if API returned an error in the JSON response
+            if isinstance(data, dict) and 'error' in data:
+                logger.error(f"API error for role {intern_role_id}: {data['error']}")
+                # Update sync record with 0 count for API error
+                RoleDealSync.objects.update_or_create(
+                    intern_role_id=intern_role_id,
+                    defaults={
+                        'total_rejected_deals': 0,
+                        'last_sync_date': today
+                    }
+                )
+                return 0
+            
+            # Handle case where API returns success but no data
+            if isinstance(data, dict):
+                deals = data.get('data', [])
+                if deals is None:
+                    deals = []
+            else:
+                logger.warning(f"Unexpected data format for role {intern_role_id}: {type(data)}")
+                deals = []
+            
+            # Log the number of deals found
+            logger.debug(f"Found {len(deals)} deals for role {intern_role_id}")
+            
+            # Count rejected and closed deals
+            rejected_closed_count = 0
+            for deal in deals:
+                if isinstance(deal, dict):
+                    stage = deal.get('Stage', '').lower()
+                    if 'rejected' in stage or 'closed' in stage:
+                        rejected_closed_count += 1
+                        logger.debug(f"Found rejected/closed deal: {deal.get('Deal_Name', 'Unknown')} - Stage: {stage}")
+            
+            # Update or create sync record
+            RoleDealSync.objects.update_or_create(
+                intern_role_id=intern_role_id,
+                defaults={
+                    'total_rejected_deals': rejected_closed_count,
+                    'last_sync_date': today
+                }
+            )
+            
+            logger.info(f"Synced deals for role {intern_role_id}: {rejected_closed_count} rejected/closed deals out of {len(deals)} total deals")
+            return rejected_closed_count
+            
+        except requests.Timeout as e:
+            logger.error(f"API request timeout for role {intern_role_id}: {e}")
+            # Update sync record with 0 count for timeout
+            RoleDealSync.objects.update_or_create(
+                intern_role_id=intern_role_id,
+                defaults={
+                    'total_rejected_deals': 0,
+                    'last_sync_date': today
+                }
+            )
+            return 0
+        except requests.RequestException as e:
+            logger.error(f"API request failed for role {intern_role_id}: {e}")
+            # Check if it's a specific HTTP error
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
+            # Update sync record with 0 count for failed requests
+            RoleDealSync.objects.update_or_create(
+                intern_role_id=intern_role_id,
+                defaults={
+                    'total_rejected_deals': 0,
+                    'last_sync_date': today
+                }
+            )
+            return 0
+        except Exception as e:
+            logger.error(f"Unexpected error syncing deals for role {intern_role_id}: {e}")
+            logger.exception("Full traceback:")  # This will log the full stack trace
+            # Update sync record with 0 count for other errors
+            RoleDealSync.objects.update_or_create(
+                intern_role_id=intern_role_id,
+                defaults={
+                    'total_rejected_deals': 0,
+                    'last_sync_date': today
+                }
+            )
+            return 0
+    
     
     def extract_json_field(self, field_value: str) -> List[str]:
         """
@@ -123,33 +382,104 @@ class JobMatcher:
     
     def check_industry_match(self, contact_interests: List[str], role_tags: List[str]) -> Tuple[bool, List[str]]:
         """
-        Check if contact interests match with role tags
+        Check if contact interests match with role tags using ChatGPT with fallback
+        Returns (is_match, matched_items)
+        """
+        # print(f"Checking industry match...", contact_interests, role_tags)
+        if not contact_interests or not role_tags:
+            return False, []
+        
+        #Try ChatGPT matching first if available
+        if self.client:
+            try:
+                return self.check_industry_match_with_gpt(contact_interests, role_tags)
+            except Exception as e:
+                logger.warning(f"GPT matching failed, falling back to traditional matching: {e}")
+        
+        #Fallback to traditional matching
+        # return self.check_industry_match_traditional(contact_interests, role_tags)
+    
+    def check_industry_match_with_gpt(self, contact_interests: List[str], role_tags: List[str]) -> Tuple[bool, List[str]]:
+        """
+        Uses GPT to check if contact interests match role tags.
         Returns (is_match, matched_items)
         """
         if not contact_interests or not role_tags:
             return False, []
+        # print("GPT matching for contact interests:", contact_interests, "and role tags:", role_tags)
+        prompt = f"""
+        You are a smart matcher. Given two lists:
+        Interests: {contact_interests}
+        Roles: {role_tags}
+
+        Match items from Interests to Roles that mean the same thing,
+        even if they are abbreviated, misspelled, or partially overlapping.
+
+        Return the results as a JSON list of mappings, e.g.:
+        ["Software Engineer -> Software Eng.", "Marketing -> Digital Marketing"]
+        """
         
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",  # you can also use "gpt-4o" or "gpt-3.5-turbo"
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+
+        content = response.choices[0].message.content.strip()
+        
+        # Try to parse GPT output
         matched_items = []
-        contact_interests_lower = [interest.lower().strip() for interest in contact_interests]
-        role_tags_lower = [tag.lower().strip() for tag in role_tags]
-        
-        # First check for exact matches
-        for tag in role_tags:
-            tag_lower = tag.lower().strip()
-            if tag_lower in contact_interests_lower:
-                matched_items.append(tag)
-        
-        # If no exact matches, check for partial matches
-        if not matched_items:
-            for tag in role_tags:
-                tag_lower = tag.lower().strip()
-                for interest in contact_interests:
-                    interest_lower = interest.lower().strip()
-                    if (tag_lower in interest_lower or interest_lower in tag_lower) and len(tag_lower) > 2:
-                        matched_items.append(f"{interest} ~ {tag}")
-                        break
-        
+        if content.startswith("["):
+            try:
+                matched_items = json.loads(content)
+            except:
+                matched_items = [content]
+        else:
+            matched_items = content.split("\n")
+
+        # print("GPT matched items:", matched_items)
+
         return len(matched_items) > 0, matched_items
+    
+    # def check_industry_match_traditional(contact_interests: List[str], role_tags: List[str]) -> Tuple[bool, List[str]]:
+    #     """
+    #     Check if contact interests match with role tags.
+    #     Returns (is_match, matched_items)
+    #     Uses exact, partial, and fuzzy matching.
+    #     """
+    #     print(f"Checking industry match...", contact_interests, role_tags)
+    #     if not contact_interests or not role_tags:
+    #         return False, []
+        
+    #     matched_items = []
+    #     contact_interests_lower = [interest.lower().strip() for interest in contact_interests]
+    #     role_tags_lower = [tag.lower().strip() for tag in role_tags]
+
+    #     #  Exact matches
+    #     for tag, tag_lower in zip(role_tags, role_tags_lower):
+    #         if tag_lower in contact_interests_lower:
+    #             matched_items.append(tag)
+
+    #     #  Partial substring matches
+    #     if not matched_items:
+    #         for tag, tag_lower in zip(role_tags, role_tags_lower):
+    #             for interest, interest_lower in zip(contact_interests, contact_interests_lower):
+    #                 if (tag_lower in interest_lower or interest_lower in tag_lower) and len(tag_lower) > 2:
+    #                     matched_items.append(f"{interest} ~ {tag}")
+    #                     break
+
+    #     #  Fuzzy similarity matches (handles typos / abbreviations)
+    #     if not matched_items:
+    #         threshold = 0.7  # similarity threshold (0–1)
+    #         for tag, tag_lower in zip(role_tags, role_tags_lower):
+    #             for interest, interest_lower in zip(contact_interests, contact_interests_lower):
+    #                 similarity = SequenceMatcher(None, tag_lower, interest_lower).ratio()
+    #                 if similarity >= threshold:
+    #                     matched_items.append(f"{interest} ≈ {tag}")
+    #                     break
+    #     print(f"Matched Items: {matched_items}")
+    #     return len(matched_items) > 0, matched_items
+    
     
     def check_location_match(self, contact: Contact, role: InternRole) -> bool:
         """
@@ -233,9 +563,11 @@ class JobMatcher:
             logger.error(f"Error fetching skills for contact {contact_id}: {e}")
             return []
     
-    def check_skill_match(self, contact_id: str, role: InternRole) -> Tuple[bool, List[str]]:
+    def check_skill_match(self, contact_id: str, role: "InternRole") -> Tuple[bool, List[str]]:
         """
-        Enhanced skill matching using extracted skills from CVs
+        Enhanced skill matching using extracted skills from CVs.
+        Matches exact words or relevant partials without accidental substring matches.
+        Handles short skills like 'C', 'C++', 'R'.
         """
         contact_skills = self.get_contact_skills(contact_id)
         
@@ -248,17 +580,28 @@ class JobMatcher:
             return False, []
         
         matched_skills = []
-        
-        # Direct skill matching
+
+        # Tokenize role text (safe word-level matching, includes short words)
+        role_tokens = set(re.findall(r"[a-zA-Z0-9\+\#]+", role_text.lower()))
+
         for skill in contact_skills:
             skill_lower = skill.lower().strip()
-            if len(skill_lower) > 2:  # Skip very short skills
-                # Check for exact mentions in role requirements
-                if skill_lower in role_text:
+
+            #  Special handling for very short skills (1–2 chars or symbols like "c++", "c#", "r")
+            if len(skill_lower) <= 2 or any(ch in skill_lower for ch in ["+", "#"]):
+                if skill_lower in role_tokens:
                     matched_skills.append(skill)
-                # Check for partial matching (for skills like "Python" matching "Python programming")
-                elif any(word in role_text for word in skill_lower.split() if len(word) > 3):
-                    matched_skills.append(skill)
+                continue
+            
+            #  Exact match (whole word, e.g. "git" not matching "digital")
+            if re.search(rf"\b{re.escape(skill_lower)}\b", role_text):
+                matched_skills.append(skill)
+                continue
+
+            #  Partial match (multi-word skills like "python programming" match "python")
+            skill_tokens = skill_lower.split()
+            if any(token in role_tokens for token in skill_tokens if len(token) > 3):
+                matched_skills.append(skill)
         
         return len(matched_skills) > 0, matched_skills
     
@@ -284,25 +627,25 @@ class JobMatcher:
         """
         if not role.intern_company_id:
             return False
-        
+
         try:
             account = Account.objects.get(id=role.intern_company_id)
             if not account.follow_up_date:
                 return True  # Exclude if follow_up_date is empty
             
-            today = timezone.now().date()
-            follow_up_date = account.follow_up_date.date() if hasattr(account.follow_up_date, 'date') else account.follow_up_date
             
-            return follow_up_date <= today  # Exclude if today or past date
+            follow_today = timezone.now().date()
+            follow_up_date = account.follow_up_date.date() if hasattr(account.follow_up_date, 'date') else account.follow_up_date
+            return follow_up_date <= follow_today 
             
         except Account.DoesNotExist:
-            logger.warning(f"Account {role.intern_company_id} not found for role {role.id}")
             return False
     
-    def check_intern_to_employee_ratio(self, role: InternRole) -> bool:
+    def check_intern_to_employee_ratio(self, role: InternRole, contact: Contact = None) -> bool:
         """
         Check if Intern-to-employee ratio ≤ 1:4
         Returns True if company should be excluded (ratio > 1:4)
+        Now includes filter for contact start_date between deals start and end date
         """
         if not role.intern_company_id:
             return False
@@ -320,11 +663,35 @@ class JobMatcher:
                 return True  # Exclude if employee count is not a valid number
             
             # Count "Role Confirmed" deals for this company
-            # Assuming deals with stage containing "confirmed" or "role confirmed"
-            confirmed_deals_count = Deal.objects.filter(
+            # Base query for confirmed deals
+            confirmed_deals_query = Deal.objects.filter(
                 account_id=role.intern_company_id,
                 stage__icontains='Role Confirmed'
-            ).count()
+            )
+            
+            # If contact is provided and has start_date, filter deals by date range
+            if contact and contact.start_date:
+                try:
+                    # Convert contact start date to date object if needed
+                    contact_start_date = contact.start_date.date() if hasattr(contact.start_date, 'date') else contact.start_date
+                    
+                    # Filter deals where contact start_date is between deal start_date and end_date
+                    confirmed_deals_query = confirmed_deals_query.filter(
+                        start_date__lte=contact_start_date,
+                        end_date__gte=contact_start_date
+                    ).exclude(
+                        start_date__isnull=True
+                    ).exclude(
+                        end_date__isnull=True
+                    )
+                    
+                    logger.info(f"Filtered confirmed deals for contact start date {contact_start_date}")
+                    
+                except Exception as e:
+                    logger.warning(f"Error filtering deals by contact start date: {e}")
+                    # Continue with original query if date filtering fails
+            
+            confirmed_deals_count = confirmed_deals_query.count()
             
             # If no confirmed deals, ratio is good
             if confirmed_deals_count == 0:
@@ -416,10 +783,27 @@ class JobMatcher:
             logger.error(f"Error checking start date priority for contact {contact.id} and role {role.id}: {e}")
             return False
     
+    def check_rejected_closed_deals(self, contact_id: str) -> bool:
+        """
+        Check if contact has 2 or more deals marked as "Rejected" or "Closed"
+        Returns True if contact should be deprioritized
+        """
+        try:
+            rejected_closed_count = ContactDeal.objects.filter(
+                contact_id=contact_id,
+                stage__in=['Rejected', 'Closed']
+            ).count()
+            
+            return rejected_closed_count >= 2
+            
+        except Exception as e:
+            logger.error(f"Error checking rejected/closed deals for contact {contact_id}: {e}")
+            return False
+    
     def calculate_match_score(self, industry_match: bool, location_match: bool, 
                             work_policy_match: bool, skill_match: bool,
                             matched_industries: List[str], matched_skills: List[str],
-                            start_date_priority: bool = False) -> float:
+                            start_date_priority: bool = False, rejected_deals_count: int = 0) -> float:
         """
         Calculate overall match score based on different criteria
         """
@@ -428,24 +812,31 @@ class JobMatcher:
         # Industry match is most important (40% weight)
         if industry_match:
             score += 0.4 * min(1.0, len(matched_industries) / 3.0)
-        
+            logger.info(f"Industry match score: {score:.2f} with {len(matched_industries)} matched industries")
         # Location match (15% weight)
         if location_match:
             score += 0.15
-        
+            logger.info(f"Location match score: {score:.2f}")
         # Work policy match (20% weight)
         if work_policy_match:
             score += 0.20
-        
+            logger.info(f"Work policy match score: {score:.2f}")
         # Skill match (25% weight)
         if skill_match:
             score += 0.25 * min(1.0, len(matched_skills) / 5.0)
-        
+            logger.info(f"Skill match score: {score:.2f} with {len(matched_skills)} matched skills")
+
         # Start date priority bonus (0.10 if within 2 weeks of confirmed role end date)
         if start_date_priority:
             score += 0.10
+            logger.info(f"Start date priority bonus applied: {score:.2f}")
 
-        return min(1.0, score)  # Cap at 1.0
+        # Penalty for roles with 2+ rejected/closed deals (-0.10)
+        if rejected_deals_count >= 2:
+            score -= 0.10
+            logger.info(f"Rejected deals penalty applied: {rejected_deals_count} rejected deals (-0.10)")
+        
+        return max(0.0, min(1.0, score))  # Cap between 0.0 and 1.0
     
     def find_matches_for_contact(self, contact_id: str) -> List[Dict[str, Any]]:
         """
@@ -454,7 +845,7 @@ class JobMatcher:
         try:
             contact = Contact.objects.get(id=contact_id)
         except Contact.DoesNotExist:
-            logger.error(f"Contact {contact_id} not found")
+            # logger.error(f"Contact {contact_id} not found")
             return []
         
         # Get contact interests
@@ -463,39 +854,43 @@ class JobMatcher:
         if not contact_interests:
             logger.info(f"No interests found for contact {contact_id}")
         
+        # Check if contact has 2+ rejected/closed deals for deprioritization
+        # has_rejected_deals = self.check_rejected_closed_deals(contact_id)
+        # if has_rejected_deals:
+        #     logger.info(f"Contact {contact_id} has 2+ rejected/closed deals - will be deprioritized")
+        
         matches = []
         
         # Get all active intern roles
-        roles = InternRole.objects.filter(role_status__icontains="Active",id = "4078552000229311006")
+        roles = InternRole.objects.filter(role_status__icontains="Active")
 
         for role in roles:
             
-            print(f"*****************************{role.id}*****************************")
             try:
+                # Sync deal data for this role (with caching)
+                rejected_deals_count = self.sync_role_deals(role.id)
+                logger.info(f"Role {role.id} has {rejected_deals_count} rejected/closed deals")
+                
                 # Enhanced filtering criteria
                 
                 # 1. Check if company has is_dnc = True (exclude if True)
                 if self.check_company_dnc_status(role):
-                    logger.info(f"Excluding role {role.id} - company is DNC")
-                    print("DNC")
+                    logger.info(f"Excluding role {role.id} and company id {role.intern_company_id} - company is DNC")
                     continue
                 
                 # 2. Check if company follow_up_date is empty, today, or past (exclude if True)
                 if self.check_company_follow_up_date(role):
-                    logger.info(f"Excluding role {role.id} - invalid follow_up_date")
-                    print("Follow up date")
+                    logger.info(f"Excluding role {role.id} and company id {role.intern_company_id}- invalid follow_up_date")
                     continue
                 
                 # 3. Check if intern-to-employee ratio > 1:4 (exclude if True)
-                if self.check_intern_to_employee_ratio(role):
-                    logger.info(f"Excluding role {role.id} - intern-to-employee ratio exceeded")
-                    print("Intern to employee ratio")
+                if self.check_intern_to_employee_ratio(role, contact):
+                    logger.info(f"Excluding role {role.id} and company id {role.intern_company_id} - intern-to-employee ratio exceeded")
                     continue
                 
                 # 4. Check if company has more than 3 active deals (exclude if True)
                 if self.check_active_deals_limit(role):
-                    logger.info(f"Excluding role {role.id} - too many active deals")
-                    print("Active deals limit")
+                    logger.info(f"Excluding role {role.id} and company id {role.intern_company_id}- too many active deals")
                     continue
                 
                 # Existing matching criteria
@@ -515,13 +910,13 @@ class JobMatcher:
                 
                 # Check start date priority (within 2 weeks of confirmed role end date)
                 start_date_priority = self.check_start_date_priority(contact, role)
-                
+                logger.info(f"Start date priority bonus applied: {start_date_priority} {role.intern_company_id} {role.id}")
                 # Calculate overall score
                 match_score = self.calculate_match_score(
                     industry_match, location_match, work_policy_match, skill_match,
-                    matched_industries, matched_skills, start_date_priority
+                    matched_industries, matched_skills, start_date_priority, rejected_deals_count
                 )
-                print(f"Match score for contact {contact_id} with role {role.id}: {match_score:.2f}")
+                logger.info(f"Match score for contact {contact_id} with role {role.id}: {match_score:.2f}")
                 # Only include matches with some score
                 if match_score > 0.1:  # 10% minimum threshold
                     match_reason_parts = []
@@ -535,6 +930,9 @@ class JobMatcher:
                         match_reason_parts.append(f"Skills: {', '.join(matched_skills[:3])}")
                     if start_date_priority:
                         match_reason_parts.append("Start date priority (+0.10)")
+                    if rejected_deals_count >= 2:
+                        match_reason_parts.append(f"Rejected deals penalty ({rejected_deals_count} deals, -0.10)")
+                    
                     
                     matches.append({
                         'contact_id': contact_id,
@@ -545,12 +943,14 @@ class JobMatcher:
                         'work_policy_match': work_policy_match,
                         'skill_match': skill_match,
                         'start_date_priority': start_date_priority,
+                        # 'has_rejected_deals': has_rejected_deals,
                         'matched_industries': matched_industries,
                         'matched_skills': matched_skills,
                         'match_reason': '; '.join(match_reason_parts),
                         'role_title': role.role_title or role.name,
                         'company_name': role.intern_company_name,
                     })
+                    print("total job found",len(matches))
                     
             except Exception as e:
                 logger.error(f"Error matching contact {contact_id} with role {role.id}: {e}")
@@ -854,7 +1254,7 @@ def main():
     
     try:
         results = matcher.process_all_contacts()
-        print(f"✅ Job matching completed successfully!")
+        print(f" Job matching completed successfully!")
         print(f"Total contacts: {results['total_contacts']}")
         print(f"Contacts with matches: {results['contacts_with_matches']}")
         print(f"Total matches created: {results['total_matches']}")

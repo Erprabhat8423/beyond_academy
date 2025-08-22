@@ -20,10 +20,6 @@ load_dotenv()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
-
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-*u(da@r_ke1*r_0vse)9xkpa9$-#ybx@$8-@#ysb%nx3k!63((')
 
@@ -42,8 +38,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'corsheaders',  # For CORS handling
-    'zoho_app',  # Our main app
+    'corsheaders',
+    'zoho_app', 
 ]
 
 MIDDLEWARE = [
@@ -155,7 +151,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 
-CORS_ALLOW_ALL_ORIGINS = DEBUG  # Allow all origins in development
+CORS_ALLOW_ALL_ORIGINS = DEBUG
 
 # Webhook settings
 WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', 'your_webhook_secret_key_here')

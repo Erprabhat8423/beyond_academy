@@ -84,7 +84,7 @@ class Command(BaseCommand):
                 if result['status'] == 'success':
                     self.stdout.write(
                         self.style.SUCCESS(
-                            f"✅ Matching completed for contact {contact_id}: "
+                            f" Matching completed for contact {contact_id}: "
                             f"{result['total_matches']} matches found, "
                             f"{result['stored_matches']} stored"
                         )

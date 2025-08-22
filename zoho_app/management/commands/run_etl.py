@@ -56,35 +56,35 @@ class Command(BaseCommand):
                 self.stdout.write("Syncing contacts only...")
                 sync_contacts(incremental=incremental)
                 self.stdout.write(
-                    self.style.SUCCESS("✅ Contacts sync completed successfully")
+                    self.style.SUCCESS(" Contacts sync completed successfully")
                 )
                 
             elif options['accounts_only']:
                 self.stdout.write("Syncing accounts only...")
                 sync_accounts(incremental=incremental)
                 self.stdout.write(
-                    self.style.SUCCESS("✅ Accounts sync completed successfully")
+                    self.style.SUCCESS(" Accounts sync completed successfully")
                 )
                 
             elif options['intern_roles_only']:
                 self.stdout.write("Syncing intern roles only...")
                 sync_intern_roles(incremental=incremental)
                 self.stdout.write(
-                    self.style.SUCCESS("✅ Intern roles sync completed successfully")
+                    self.style.SUCCESS(" Intern roles sync completed successfully")
                 )
                 
             elif options['deals_only']:
                 self.stdout.write("Syncing deals only...")
                 sync_deals(incremental=incremental)
                 self.stdout.write(
-                    self.style.SUCCESS("✅ Deals sync completed successfully")
+                    self.style.SUCCESS(" Deals sync completed successfully")
                 )
                 
             elif options['contact_deals_only']:
                 self.stdout.write("Syncing contact deals only...")
                 sync_contact_deals()
                 self.stdout.write(
-                    self.style.SUCCESS("✅ Contact deals sync completed successfully")
+                    self.style.SUCCESS(" Contact deals sync completed successfully")
                 )
                 
             else:
@@ -93,23 +93,23 @@ class Command(BaseCommand):
                 
                 self.stdout.write("Step 1: Syncing contacts...")
                 sync_contacts(incremental=incremental)
-                self.stdout.write(self.style.SUCCESS("✅ Contacts sync completed"))
+                self.stdout.write(self.style.SUCCESS(" Contacts sync completed"))
                 
                 self.stdout.write("Step 2: Syncing accounts...")
                 sync_accounts(incremental=incremental)
-                self.stdout.write(self.style.SUCCESS("✅ Accounts sync completed"))
+                self.stdout.write(self.style.SUCCESS(" Accounts sync completed"))
                 
                 self.stdout.write("Step 3: Syncing intern roles...")
                 sync_intern_roles(incremental=incremental)
-                self.stdout.write(self.style.SUCCESS("✅ Intern roles sync completed"))
+                self.stdout.write(self.style.SUCCESS(" Intern roles sync completed"))
                 
                 self.stdout.write("Step 4: Syncing deals...")
                 sync_deals(incremental=incremental)
-                self.stdout.write(self.style.SUCCESS("✅ Deals sync completed"))
+                self.stdout.write(self.style.SUCCESS(" Deals sync completed"))
                 
                 self.stdout.write("Step 5: Syncing contact deals...")
                 sync_contact_deals()
-                self.stdout.write(self.style.SUCCESS("✅ Contact deals sync completed"))
+                self.stdout.write(self.style.SUCCESS(" Contact deals sync completed"))
                 
             end_time = timezone.now()
             duration = end_time - start_time

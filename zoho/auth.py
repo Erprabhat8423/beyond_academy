@@ -58,7 +58,7 @@ def get_access_token(force_refresh=False):
         
         # Add retry logic for rate limiting
         max_retries = 3
-        base_wait_time = 60  # Start with 60 seconds
+        base_wait_time = 120
         
         for attempt in range(max_retries):
             try:
@@ -66,7 +66,7 @@ def get_access_token(force_refresh=False):
                 
                 if response.status_code == 429 or (response.status_code == 400 and "too many requests" in response.text.lower()):
                     if attempt < max_retries - 1:
-                        wait_time = base_wait_time * (2 ** attempt)  # Exponential backoff
+                        wait_time = base_wait_time * (2 ** attempt)
                         logger.warning(f"Rate limited. Waiting {wait_time} seconds before retry {attempt + 1}/{max_retries}")
                         time.sleep(wait_time)
                         continue
@@ -95,9 +95,9 @@ def get_access_token(force_refresh=False):
             raise ValueError("Invalid token response - no access_token found")
         
         # Cache the token (Zoho tokens typically expire in 1 hour)
-        expires_in = token_data.get('expires_in', 3600)  # Default 1 hour
+        expires_in = token_data.get('expires_in', 3600)
         _token_cache['access_token'] = token_data['access_token']
-        _token_cache['expires_at'] = datetime.now() + timedelta(seconds=expires_in - 300)  # Refresh 5 min early
+        _token_cache['expires_at'] = datetime.now() + timedelta(seconds=expires_in - 300)
         
         logger.info(f"Successfully obtained new access token (expires in {expires_in} seconds)")
         return token_data['access_token']

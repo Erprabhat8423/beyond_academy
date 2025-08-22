@@ -145,14 +145,14 @@ class SkillExtractor:
                 logger.error(f"OpenAI API call failed: {api_error}")
                 return []
             logger.info(f"OpenAI response received: {len(response_text)} characters")
-            logger.debug(f"OpenAI raw response: {response_text[:500]}...")  # Log first 500 chars for debugging
+            logger.debug(f"OpenAI raw response: {response_text[:500]}...")
             
             # Try to parse as JSON
             try:
                 skills_data = json.loads(response_text)
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse OpenAI response as JSON: {e}")
-                logger.debug(f"Raw response: {response_text}")
+                # logger.error(f"Failed to parse OpenAI response as JSON: {e}")
+                # logger.debug(f"Raw response: {response_text}")
                 # Try to extract JSON from response if it's wrapped in text
                 start_idx = response_text.find('[')
                 end_idx = response_text.rfind(']') + 1
@@ -174,7 +174,7 @@ class SkillExtractor:
                 if isinstance(skill, dict) and all(key in skill for key in ['skill_name', 'category', 'proficiency_level']):
                     # Clean and validate the skill data
                     cleaned_skill = {
-                        'skill_name': str(skill['skill_name']).strip()[:255],  # Limit to model field length
+                        'skill_name': str(skill['skill_name']).strip()[:255],
                         'category': str(skill['category']).strip()[:100],
                         'proficiency_level': str(skill['proficiency_level']).strip()[:50]
                     }
@@ -228,7 +228,7 @@ class SkillExtractor:
                             skill_category=skill_data['category'],
                             proficiency_level=skill_data['proficiency_level'],
                             extraction_method='openai_gpt3.5',
-                            confidence_score=0.8,  # Default confidence for OpenAI extraction
+                            confidence_score=0.8,
                         )
                         created_skill_ids.append(skill.id)
                         

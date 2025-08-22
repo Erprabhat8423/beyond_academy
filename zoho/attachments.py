@@ -346,11 +346,11 @@ class ZohoAttachmentManager:
         if contact_name:
             # Clean contact name
             clean_name = re.sub(r'[<>:"/\\|?*]', '_', contact_name)
-            clean_name = clean_name.strip()[:50]  # Limit length
+            clean_name = clean_name.strip()[:50]
             prefix_parts.append(clean_name)
         
         if contact_id:
-            prefix_parts.append(contact_id[:10])  # Limit ID length
+            prefix_parts.append(contact_id[:10])
         
         if prefix_parts:
             prefix = '_'.join(prefix_parts)
