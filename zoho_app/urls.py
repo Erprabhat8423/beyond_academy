@@ -6,6 +6,9 @@ app_name = 'zoho_app'
 urlpatterns = [
     # Webhook endpoints
     path('webhook/zoho/contact/', views.handle_contact_webhook, name='contact_webhook'),
+    path('webhook/zoho/account/', views.handle_account_webhook, name='account_webhook'),
+    path('webhook/zoho/intern_role/', views.handle_intern_role_webhook, name='intern_role_webhook'),
+    path('webhook/zoho/contact_sync/', views.contact_sync_webhook, name='contact_sync_webhook'),
     path('webhook/health/', views.health_check, name='health_check'),
     
     # ETL endpoints

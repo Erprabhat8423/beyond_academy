@@ -128,6 +128,31 @@ class ZohoClient:
             logger.error(f"Error fetching contact {contact_id}: {e}")
             return None
 
+    def get_record(self, module, record_id):
+        """
+        Get a single record by ID from any Zoho CRM module
+        
+        Args:
+            module: The CRM module name (e.g., 'Contacts', 'Accounts', 'Intern_Roles')
+            record_id: The ID of the record to fetch
+            
+        Returns:
+            Record data dictionary or None if not found
+        """
+        try:
+            url = f"{self.base_url}/{module}/{record_id}"
+            response = self.session.get(url, headers=self.headers, timeout=self.timeout)
+            response.raise_for_status()
+            
+            data = response.json().get('data', [])
+            if data and len(data) > 0:
+                return data[0]
+            return None
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching {module} record {record_id}: {e}")
+            return None
+
     def get_attachments(self, module, record_id):
         """
         Get attachments for a specific record

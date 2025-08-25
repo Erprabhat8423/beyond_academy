@@ -7,6 +7,7 @@ class SyncTracker(models.Model):
         ('accounts', 'Accounts'),
         ('intern_roles', 'Intern Roles'),
         ('deals', 'Deals'),
+        ('role_deals', 'Role Deals'),
     ]
     entity_type = models.CharField(max_length=50, choices=ENTITY_TYPE_CHOICES, unique=True)
     last_sync_timestamp = models.DateTimeField(null=True, blank=True)
@@ -165,6 +166,8 @@ class Contact(models.Model):
     visa_notes = models.TextField(null=True, blank=True)
     house_rules = models.TextField(null=True, blank=True)
 
+    partnership_specialist_id = models.CharField(max_length=255, null=True, blank=True)
+
     def __str__(self):
         return self.full_name or self.email or self.id
 
@@ -293,28 +296,28 @@ class Deal(models.Model):
         return self.deal_name or self.id
 
 
-class ContactDeal(models.Model):
-    id = models.CharField(max_length=255, primary_key=True)
-    deal_name = models.CharField(max_length=255, blank=True, null=True)
-    description = models.TextField(blank=True, null=True)
-    contact_id = models.CharField(max_length=255, blank=True, null=True)
-    account_id = models.CharField(max_length=255, blank=True, null=True)
-    account_name = models.CharField(max_length=255, blank=True, null=True)
-    stage = models.CharField(max_length=255, blank=True, null=True)
-    deal_type = models.CharField(max_length=255, blank=True, null=True)
-    closing_date = models.DateTimeField(blank=True, null=True)
-    start_date = models.DateTimeField(blank=True, null=True)
-    end_date = models.DateTimeField(blank=True, null=True)
-    created_time = models.DateTimeField(blank=True, null=True)
-    modified_time = models.DateTimeField(blank=True, null=True)
-    created_by_id = models.CharField(max_length=255, blank=True, null=True)
-    created_by_name = models.CharField(max_length=255, blank=True, null=True)
-    created_by_email = models.CharField(max_length=255, blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+# class ContactDeal(models.Model):
+#     id = models.CharField(max_length=255, primary_key=True)
+#     deal_name = models.CharField(max_length=255, blank=True, null=True)
+#     description = models.TextField(blank=True, null=True)
+#     contact_id = models.CharField(max_length=255, blank=True, null=True)
+#     account_id = models.CharField(max_length=255, blank=True, null=True)
+#     account_name = models.CharField(max_length=255, blank=True, null=True)
+#     stage = models.CharField(max_length=255, blank=True, null=True)
+#     deal_type = models.CharField(max_length=255, blank=True, null=True)
+#     closing_date = models.DateTimeField(blank=True, null=True)
+#     start_date = models.DateTimeField(blank=True, null=True)
+#     end_date = models.DateTimeField(blank=True, null=True)
+#     created_time = models.DateTimeField(blank=True, null=True)
+#     modified_time = models.DateTimeField(blank=True, null=True)
+#     created_by_id = models.CharField(max_length=255, blank=True, null=True)
+#     created_by_name = models.CharField(max_length=255, blank=True, null=True)
+#     created_by_email = models.CharField(max_length=255, blank=True, null=True)
+#     created_at = models.DateTimeField(auto_now_add=True)
+#     updated_at = models.DateTimeField(auto_now=True)
 
-    def __str__(self):
-        return f"{self.deal_name} (Contact: {self.contact_id})" or self.id
+#     def __str__(self):
+#         return f"{self.deal_name} (Contact: {self.contact_id})" or self.id
 
 
 class Document(models.Model):

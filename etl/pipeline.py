@@ -1,11 +1,14 @@
 import logging
 import json
-from datetime import datetime, timezone
+import time
+import requests
+from datetime import datetime, timezone, date
 from django.utils import timezone as django_timezone
 from django.db import transaction
 from django.db.utils import IntegrityError
 
-from zoho_app.models import Contact, Account, InternRole, SyncTracker, Deal, ContactDeal
+from zoho_app.models import Contact, Account, InternRole, SyncTracker, Deal, RoleDealSync
+from zoho import auth
 from zoho.api_client import ZohoClient
 
 # Configure logging
@@ -215,7 +218,7 @@ def sync_contacts(incremental=True):
         
         # Partnership and Organization fields
         'Partner_Organisation', 'From_University_partner', 'Community_Owner',
-        'Admission_Member', 'PS_Assigned_Date',
+        'Admission_Member', 'PS_Assigned_Date', 'Partner_Track_Owner1',
         
         # Accommodation fields
         'Accommodation_finalised', 'House_rules',
@@ -390,7 +393,7 @@ def sync_contacts(incremental=True):
                         'community_owner': extract_nested_name(contact_data.get('Community_Owner')),
                         'admission_member': contact_data.get('Admission_Member'),
                         'ps_assigned_date': parse_datetime_field(contact_data.get('PS_Assigned_Date')),
-                        
+                        'partnership_specialist_id': extract_nested_id(contact_data.get('Partner_Track_Owner1')),
                         # Accommodation fields
                         'accommodation_finalised': contact_data.get('Accommodation_finalised'),
                         'house_rules': contact_data.get('House_rules'),
@@ -545,68 +548,68 @@ def sync_deals_for_account(zoho_client, account_id):
         return 0
 
 
-def sync_deals_for_contact(zoho_client, contact_id):
-    """Sync deals for a specific contact using ContactDeal model"""
-    deal_fields = [
-        'id', 'Description', 'Deal_Name', 'Account_Name', 'Stage', 
-        'Closing_Date', 'Type', 'Start_date', 'End_date', 
-        'Created_Time', 'Modified_Time', 'Created_By'
-    ]
+# def sync_deals_for_contact(zoho_client, contact_id):
+#     """Sync deals for a specific contact using ContactDeal model"""
+#     deal_fields = [
+#         'id', 'Description', 'Deal_Name', 'Account_Name', 'Stage', 
+#         'Closing_Date', 'Type', 'Start_date', 'End_date', 
+#         'Created_Time', 'Modified_Time', 'Created_By'
+#     ]
     
-    try:
-        # Fetch deals for this contact
-        deals_data = zoho_client.get_related_records(
-            module='Contacts',
-            record_id=contact_id,
-            related_module='Deals',
-            fields=deal_fields
-        )
+#     try:
+#         # Fetch deals for this contact
+#         deals_data = zoho_client.get_related_records(
+#             module='Contacts',
+#             record_id=contact_id,
+#             related_module='Deals',
+#             fields=deal_fields
+#         )
         
-        deals_synced = 0
+#         deals_synced = 0
         
-        for deal_data in deals_data:
-            try:
-                with transaction.atomic():
-                    # Parse and prepare deal data
-                    created_by_data = deal_data.get('Created_By', {})
-                    deal_fields_mapped = {
-                        'id': deal_data.get('id'),
-                        'deal_name': deal_data.get('Deal_Name'),
-                        'description': deal_data.get('Description'),
-                        'contact_id': contact_id,
-                        'account_id': extract_nested_id(deal_data.get('Account_Name')),
-                        'account_name': extract_nested_name(deal_data.get('Account_Name')),
-                        'stage': deal_data.get('Stage'),
-                        'deal_type': deal_data.get('Type'),
-                        'closing_date': parse_datetime_field(deal_data.get('Closing_Date')),
-                        'start_date': parse_datetime_field(deal_data.get('Start_date')),
-                        'end_date': parse_datetime_field(deal_data.get('End_date')),
-                        'created_time': parse_datetime_field(deal_data.get('Created_Time')),
-                        'modified_time': parse_datetime_field(deal_data.get('Modified_Time')),
-                        'created_by_id': extract_nested_id(created_by_data),
-                        'created_by_name': extract_nested_name(created_by_data),
-                        'created_by_email': extract_nested_email(created_by_data),
-                    }
+#         for deal_data in deals_data:
+#             try:
+#                 with transaction.atomic():
+#                     # Parse and prepare deal data
+#                     created_by_data = deal_data.get('Created_By', {})
+#                     deal_fields_mapped = {
+#                         'id': deal_data.get('id'),
+#                         'deal_name': deal_data.get('Deal_Name'),
+#                         'description': deal_data.get('Description'),
+#                         'contact_id': contact_id,
+#                         'account_id': extract_nested_id(deal_data.get('Account_Name')),
+#                         'account_name': extract_nested_name(deal_data.get('Account_Name')),
+#                         'stage': deal_data.get('Stage'),
+#                         'deal_type': deal_data.get('Type'),
+#                         'closing_date': parse_datetime_field(deal_data.get('Closing_Date')),
+#                         'start_date': parse_datetime_field(deal_data.get('Start_date')),
+#                         'end_date': parse_datetime_field(deal_data.get('End_date')),
+#                         'created_time': parse_datetime_field(deal_data.get('Created_Time')),
+#                         'modified_time': parse_datetime_field(deal_data.get('Modified_Time')),
+#                         'created_by_id': extract_nested_id(created_by_data),
+#                         'created_by_name': extract_nested_name(created_by_data),
+#                         'created_by_email': extract_nested_email(created_by_data),
+#                     }
                     
-                    # Create or update contact deal
-                    contact_deal, created = ContactDeal.objects.update_or_create(
-                        id=deal_fields_mapped['id'],
-                        defaults=deal_fields_mapped
-                    )
+#                     # Create or update contact deal
+#                     contact_deal, created = ContactDeal.objects.update_or_create(
+#                         id=deal_fields_mapped['id'],
+#                         defaults=deal_fields_mapped
+#                     )
                     
-                    deals_synced += 1
+#                     deals_synced += 1
                     
-            except Exception as e:
-                logger.error(f"Error processing contact deal {deal_data.get('id')} for contact {contact_id}: {str(e)}")
-                continue
+#             except Exception as e:
+#                 logger.error(f"Error processing contact deal {deal_data.get('id')} for contact {contact_id}: {str(e)}")
+#                 continue
         
-        if deals_synced > 0:
-            logger.info(f"Synced {deals_synced} contact deals for contact {contact_id}")
-        return deals_synced
+#         if deals_synced > 0:
+#             logger.info(f"Synced {deals_synced} contact deals for contact {contact_id}")
+#         return deals_synced
         
-    except Exception as e:
-        logger.error(f"Error fetching contact deals for contact {contact_id}: {str(e)}")
-        return 0
+#     except Exception as e:
+#         logger.error(f"Error fetching contact deals for contact {contact_id}: {str(e)}")
+#         return 0
 
 
 def sync_accounts(incremental=True):
@@ -1052,35 +1055,173 @@ def sync_deals(incremental=True):
         raise
 
 
-def sync_contact_deals():
-    """Sync deals for all contacts separately using ContactDeal model"""
-    logger.info("Starting contact deals sync...")
-    zoho = ZohoClient()
+def sync_role_deals(incremental=True):
+    """
+    Sync deals for all intern roles and track rejected/closed deals.
+    """
+    logger.info("Starting role deals sync...")
+    
+    # Determine sync criteria
+    criteria = None
+    last_sync_info = ""
+    
+    if incremental:
+        tracker = get_sync_tracker('role_deals')
+        if tracker.last_sync_timestamp:
+            last_sync_info = f" (incremental since {tracker.last_sync_timestamp})"
+        else:
+            last_sync_info = " (full sync - no previous sync found)"
+    else:
+        last_sync_info = " (full sync - forced)"
+    
+    logger.info(f"Getting role deals data from Zoho{last_sync_info}...")
+    
+    # Get all intern roles to sync deals for
+    intern_roles = InternRole.objects.all()
+    
+    if not intern_roles:
+        logger.info("No intern roles found to sync deals for")
+        return
+    
+    total_synced = 0
+    latest_modified = None
+    
+    class RoleDealsAPI:
+        """Helper class for role deals API operations"""
+        
+        def validate_api_access(self, intern_role_id: str) -> bool:
+            """Validate if we can access the intern role"""
+            try:
+                zoho = ZohoClient()
+                # Try to get the intern role details to validate access
+                role_data = zoho.get_record('Intern_Roles', intern_role_id)
+                return role_data is not None
+            except Exception as e:
+                logger.warning(f"Cannot validate access for role {intern_role_id}: {e}")
+                return False
+        
+        def sync_role_deals_for_role(self, intern_role_id: str) -> int:
+            """
+            Sync deals for a specific intern role and return count of rejected/closed deals.
+            """
+            today = date.today()
+
+            def update_sync(count: int) -> int:
+                RoleDealSync.objects.update_or_create(
+                    intern_role_id=intern_role_id,
+                    defaults={
+                        'total_rejected_deals': count,
+                        'last_sync_date': today
+                    }
+                )
+                return count
+
+            # Check cached sync
+            try:
+                existing_sync = RoleDealSync.objects.get(intern_role_id=intern_role_id)
+                logger.debug(f"Using cached deal count for role {intern_role_id}: {existing_sync.total_rejected_deals}")
+                return existing_sync.total_rejected_deals
+            except RoleDealSync.DoesNotExist:
+                pass
+
+            # Get access token
+            access_token = auth.get_access_token()
+            if not access_token:
+                logger.error(f"Could not get access token for role {intern_role_id}")
+                return update_sync(0)
+
+            # Validate API access
+            if not self.validate_api_access(intern_role_id):
+                logger.warning(f"Cannot access role {intern_role_id} - skipping deal sync")
+                return update_sync(0)
+
+            api_url = f"https://www.zohoapis.com/crm/v2/Intern_Roles/{intern_role_id}/Deals"
+            headers = {'Authorization': f'Zoho-oauthtoken {access_token}'}
+            params = {'fields': 'Deal_Name,Account_Name,Stage,Type'}
+
+            try:
+                time.sleep(0.1)  # Avoid hitting rate limits
+                logger.debug(f"Requesting: {api_url}")
+                response = requests.get(api_url, headers=headers, params=params, timeout=30)
+
+                if response.status_code == 204:
+                    logger.info(f"No deals found for role {intern_role_id} (204)")
+                    return update_sync(0)
+
+                response.raise_for_status()
+                response_text = response.text.strip()
+                if not response_text or response_text.lower().startswith('<!doctype'):
+                    logger.error(f"Invalid response (empty/HTML) for role {intern_role_id}")
+                    return update_sync(0)
+
+                try:
+                    data = response.json()
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON for role {intern_role_id}: {e}")
+                    logger.debug(f"Raw response (first 500 chars): {response_text[:500]}")
+                    return update_sync(0)
+
+                if isinstance(data, dict) and data.get('error'):
+                    logger.error(f"API error for role {intern_role_id}: {data['error']}")
+                    return update_sync(0)
+
+                deals = data.get('data', []) if isinstance(data, dict) else []
+                logger.debug(f"Found {len(deals)} deals for role {intern_role_id}")
+
+                rejected_closed_count = sum(
+                    1 for d in deals if isinstance(d, dict) and any(
+                        kw in d.get('Stage', '').lower() for kw in ['rejected', 'closed']
+                    )
+                )
+
+                logger.info(
+                    f"Synced deals for role {intern_role_id}: "
+                    f"{rejected_closed_count} rejected/closed out of {len(deals)}"
+                )
+                return update_sync(rejected_closed_count)
+
+            except requests.Timeout as e:
+                logger.error(f"Timeout syncing deals for role {intern_role_id}: {e}")
+                return update_sync(0)
+            except requests.RequestException as e:
+                logger.error(f"HTTP error for role {intern_role_id}: {e}")
+                if getattr(e, 'response', None):
+                    logger.error(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
+                return update_sync(0)
+            except Exception as e:
+                logger.exception(f"Unexpected error syncing deals for role {intern_role_id}: {e}")
+                return update_sync(0)
+    
+    # Initialize API helper
+    api_helper = RoleDealsAPI()
     
     try:
-        # Get all contacts
-        contacts = Contact.objects.filter(lead_created_time__icontains='2025')
-        total_contacts = contacts.count()
-        total_deals_synced = 0
-        
-        logger.info(f"Syncing contact deals for {total_contacts} contacts...")
-        
-        for i, contact in enumerate(contacts, 1):
+        for role in intern_roles:
             try:
-                deals_count = sync_deals_for_contact(zoho, contact.id)
-                total_deals_synced += deals_count
+                logger.debug(f"Syncing deals for role {role.id}...")
+                rejected_count = api_helper.sync_role_deals_for_role(role.id)
+                total_synced += 1
                 
-                if i % 100 == 0:
-                    logger.info(f"Processed {i}/{total_contacts} contacts, synced {total_deals_synced} contact deals so far...")
+                # Update latest modified time (use current time for role deals sync)
+                current_time = django_timezone.now()
+                if latest_modified is None or current_time > latest_modified:
+                    latest_modified = current_time
+                
+                if total_synced % 50 == 0:
+                    logger.info(f"Processed {total_synced} roles...")
                     
             except Exception as e:
-                logger.error(f"Error syncing contact deals for contact {contact.id}: {str(e)}")
+                logger.error(f"Error processing role {role.id}: {str(e)}")
                 continue
         
-        logger.info(f"Contact deals sync completed. Synced {total_deals_synced} contact deals for {total_contacts} contacts")
+        # Update sync tracker
+        if latest_modified:
+            update_sync_tracker('role_deals', latest_modified, total_synced)
+        
+        logger.info(f"Role deals sync completed successfully. Processed {total_synced} roles")
         
     except Exception as e:
-        logger.error(f"Error in contact deals sync: {str(e)}")
+        logger.error(f"Error in role deals sync: {str(e)}")
         raise
 
 
@@ -1094,7 +1235,8 @@ def run_full_etl_pipeline():
         sync_accounts()  # This now includes deals for each account
         sync_intern_roles()
         sync_deals()  # Additional standalone deals sync
-        sync_contact_deals()  # Dedicated contact deals sync
+        sync_role_deals()  # Sync deals for intern roles
+        # sync_contact_deals()  # Dedicated contact deals sync
         
         logger.info(" Full ETL pipeline completed successfully!")
         
