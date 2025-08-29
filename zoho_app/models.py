@@ -384,3 +384,122 @@ class JobMatch(models.Model):
 
     def __str__(self):
         return f"{self.contact_id} ↔ {self.intern_role_id} [{self.match_score}]"
+
+
+class OutreachLog(models.Model):
+    """
+    Track outreach emails sent to companies
+    """
+    intern_role_id = models.CharField(max_length=255)
+    role_title = models.CharField(max_length=255, blank=True, null=True)
+    company_id = models.CharField(max_length=255, blank=True, null=True)
+    company_name = models.CharField(max_length=255, blank=True, null=True)
+    
+    # Email details
+    subject = models.CharField(max_length=500)
+    email_type = models.CharField(max_length=50, default='initial')  # initial, follow_up, final
+    sender_email = models.CharField(max_length=255)
+    sender_name = models.CharField(max_length=255, blank=True, null=True)
+    recipients = models.TextField()  # JSON list of recipient emails
+    
+    # Email tracking fields for message IDs and threading
+    message_id = models.CharField(max_length=500, blank=True, null=True)  # Unique email message ID
+    thread_id = models.CharField(max_length=500, blank=True, null=True)  # Email thread ID for grouping
+    in_reply_to = models.CharField(max_length=500, blank=True, null=True)  # References parent message
+    parent_outreach_log = models.ForeignKey('self', on_delete=models.SET_NULL, blank=True, null=True, related_name='follow_up_emails')  # Links to original outreach for follow-ups
+    
+    # Candidates included
+    candidate_ids = models.TextField()  # JSON list of candidate IDs
+    candidates_count = models.IntegerField(default=0)
+    
+    # Outreach metadata
+    is_urgent = models.BooleanField(default=False)
+    is_sent = models.BooleanField(default=False)
+    sent_at = models.DateTimeField(blank=True, null=True)
+    error_message = models.TextField(blank=True, null=True)
+    
+    # Follow-up tracking
+    follow_up_count = models.IntegerField(default=0)
+    last_follow_up_date = models.DateTimeField(blank=True, null=True)
+    next_follow_up_date = models.DateTimeField(blank=True, null=True)
+    
+    # Response tracking
+    response_received = models.BooleanField(default=False)
+    response_date = models.DateTimeField(blank=True, null=True)
+    response_type = models.CharField(max_length=50, blank=True, null=True)  # interested, not_interested, request_more_info
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Outreach for {self.role_title} ({self.email_type}) - {self.sent_at or 'Not sent'}"
+
+
+class EmailLimiter(models.Model):
+    """
+    Track email frequency to companies to enforce weekly limits
+    """
+    company_id = models.CharField(max_length=255, unique=True)
+    company_name = models.CharField(max_length=255, blank=True, null=True)
+    last_email_date = models.DateTimeField()
+    emails_sent_this_week = models.IntegerField(default=0)
+    week_start_date = models.DateField()
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.company_name} - {self.emails_sent_this_week} emails this week"
+
+
+class FollowUpTask(models.Model):
+    """
+    Track follow-up tasks for outreach emails
+    """
+    outreach_log = models.ForeignKey(OutreachLog, on_delete=models.CASCADE, related_name='follow_ups')
+    follow_up_type = models.CharField(max_length=50)  # follow_up, final, move_to_next
+    scheduled_date = models.DateTimeField()
+    completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(blank=True, null=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['scheduled_date']
+
+    def __str__(self):
+        return f"{self.follow_up_type} for {self.outreach_log.role_title} - {self.scheduled_date}"
+
+
+class CandidateOutreachHistory(models.Model):
+    """
+    Track outreach history for each candidate to avoid duplicate outreach
+    """
+    contact_id = models.CharField(max_length=255)
+    intern_role_id = models.CharField(max_length=255)
+    outreach_log = models.ForeignKey(OutreachLog, on_delete=models.CASCADE, related_name='candidate_history')
+    
+    # Outreach cycle information
+    cycle_number = models.IntegerField(default=1)  # 1st cycle, 2nd cycle, etc.
+    initial_outreach_date = models.DateTimeField()
+    last_follow_up_date = models.DateTimeField(blank=True, null=True)
+    
+    # Status tracking
+    status = models.CharField(max_length=50, default='active')  # active, responded, completed, moved_to_next
+    response_received = models.BooleanField(default=False)
+    response_date = models.DateTimeField(blank=True, null=True)
+    response_type = models.CharField(max_length=50, blank=True, null=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['contact_id', 'intern_role_id', 'cycle_number']
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Candidate {self.contact_id} → Role {self.intern_role_id} (Cycle {self.cycle_number})"

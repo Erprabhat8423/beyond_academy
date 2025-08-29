@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import outreach_views
 
 app_name = 'zoho_app'
 
@@ -25,4 +26,12 @@ urlpatterns = [
     
     # Skills endpoints
     path('webhook/skills/<str:contact_id>/', views.get_contact_skills, name='get_contact_skills'),
+    
+    # Outreach automation endpoints
+    path('api/outreach/trigger/', outreach_views.trigger_outreach_automation, name='trigger_outreach'),
+    path('api/outreach/status/', outreach_views.get_outreach_status, name='outreach_status'),
+    path('api/outreach/analytics/', outreach_views.get_outreach_analytics, name='outreach_analytics'),
+    path('api/outreach/follow-up/trigger/', outreach_views.trigger_follow_up_workflow, name='trigger_follow_up'),
+    path('api/outreach/follow-up/pending/', outreach_views.get_pending_follow_ups, name='pending_follow_ups'),
+    path('api/outreach/response/<int:outreach_log_id>/', outreach_views.mark_outreach_response, name='mark_response'),
 ]
