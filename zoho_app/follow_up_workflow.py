@@ -122,17 +122,13 @@ class FollowUpWorkflow:
     
     def send_follow_up_email(self, task: FollowUpTask, outreach_log: OutreachLog) -> Dict[str, Any]:
         """
-        Send a follow-up email for an outreach
+        Send a follow-up email for an outreach, using urgent or non-urgent templates as appropriate
         """
         try:
-            # Get the original candidates and role information
             candidate_ids = json.loads(outreach_log.candidate_ids)
             recipients = json.loads(outreach_log.recipients)
-            
-            # Get role and candidates
             role = InternRole.objects.get(id=outreach_log.intern_role_id)
             candidates = []
-            
             for candidate_id in candidate_ids:
                 try:
                     contact = Contact.objects.get(id=candidate_id)
@@ -156,7 +152,6 @@ class FollowUpWorkflow:
                 except Contact.DoesNotExist:
                     logger.warning(f"Contact {candidate_id} not found for follow-up")
                     continue
-            
             if not candidates:
                 logger.warning(f"No candidates found for follow-up task {task.id}")
                 task.completed = True
@@ -167,23 +162,17 @@ class FollowUpWorkflow:
                     'status': 'skipped',
                     'reason': 'no_candidates'
                 }
-            
-            # Convert recipients to company contacts format
             company_contacts = [{'email': email} for email in recipients]
-            
-            # Create follow-up email content
+            urgent = bool(getattr(outreach_log, 'is_urgent', False))
             email_content = self.outreach_automation.create_outreach_email(
-                role, candidates, company_contacts, task.follow_up_type, outreach_log
+                role, candidates, company_contacts, task.follow_up_type, outreach_log, urgent=urgent
             )
-            
             if not email_content:
                 return {
                     'task_id': task.id,
                     'status': 'error',
                     'error': 'email_creation_failed'
                 }
-            
-            # Get sender information
             sender_info = None
             for candidate in candidates:
                 if candidate.get('partnership_specialist_id'):
@@ -192,28 +181,21 @@ class FollowUpWorkflow:
                     )
                     if sender_info:
                         break
-            
             if not sender_info:
                 return {
                     'task_id': task.id,
                     'status': 'error',
                     'error': 'no_partnership_specialist'
                 }
-            
-            # Send the follow-up email
             success = self.outreach_automation.send_email(
                 email_content,
                 sender_info['email'],
                 sender_info['full_name']
             )
-            
             if success:
-                # Extract message tracking information
                 message_id = email_content.get('message_id')
                 thread_id = email_content.get('thread_id')
                 in_reply_to = email_content.get('in_reply_to')
-                
-                # Create new outreach log for the follow-up
                 follow_up_log = OutreachLog.objects.create(
                     intern_role_id=outreach_log.intern_role_id,
                     role_title=outreach_log.role_title,
@@ -235,19 +217,13 @@ class FollowUpWorkflow:
                     in_reply_to=in_reply_to,
                     parent_outreach_log=outreach_log
                 )
-                
-                # Update original outreach log
                 outreach_log.follow_up_count += 1
                 outreach_log.last_follow_up_date = timezone.now()
                 outreach_log.save()
-                
-                # Mark task as completed
                 task.completed = True
                 task.completed_at = timezone.now()
                 task.save()
-                
                 logger.info(f"Follow-up email sent for task {task.id}")
-                
                 return {
                     'task_id': task.id,
                     'status': 'success',
@@ -260,7 +236,6 @@ class FollowUpWorkflow:
                     'status': 'error',
                     'error': 'email_send_failed'
                 }
-                
         except Exception as e:
             logger.error(f"Error sending follow-up email for task {task.id}: {e}")
             return {
@@ -381,13 +356,11 @@ class FollowUpWorkflow:
         """
         Initiate new outreach process for a candidate to a specific role
         This creates a new outreach cycle for the candidate-role combination
+        Uses urgent or non-urgent templates as appropriate
         """
         try:
-            # Get candidate information
             contact = Contact.objects.get(id=candidate_id)
             role = InternRole.objects.get(id=role_id)
-            
-            # Prepare candidate data
             candidate_info = {
                 'contact_id': contact.id,
                 'contact': contact,
@@ -405,10 +378,10 @@ class FollowUpWorkflow:
                 'industry_choice_2': contact.industry_choice_2,
                 'industry_choice_3': contact.industry_choice_3,
             }
-            
+            urgent = self.outreach_automation.check_urgency(contact)
             # Use the outreach automation to process this single candidate-role pair
+            # Pass urgent flag if needed in future for more granular control
             result = self.outreach_automation.process_outreach_for_role(role_id, [candidate_info])
-            
             if result['status'] == 'success':
                 return {
                     'status': 'success',
@@ -425,7 +398,6 @@ class FollowUpWorkflow:
                     'role_id': role_id,
                     'reason': result.get('reason', 'unknown_error')
                 }
-                
         except Contact.DoesNotExist:
             logger.error(f"Contact {candidate_id} not found")
             return {

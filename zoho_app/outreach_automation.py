@@ -50,15 +50,139 @@ except ImportError:
 
 
 class OutreachAutomation:
-    """
-    Automated outreach system for sending candidate information to companies
-    """
+
+    def run_urgent_outreach_batch(self, max_roles: int = None) -> Dict[str, Any]:
+        """
+        Run batch outreach for all roles with urgent candidates (urgency condition met)
+        Includes follow-up workflow as in the normal flow
+        """
+        try:
+            logger.info("Starting batch urgent outreach automation")
+
+            # Get urgent candidates grouped by role
+            role_candidates = self.get_urgent_candidates_by_role()
+
+            if not role_candidates:
+                logger.info("No urgent role candidates found for outreach")
+                return {'status': 'completed', 'roles_processed': 0}
+
+            results = []
+            processed_count = 0
+
+            # Limit processing to max_roles if specified
+            for role_id, candidates in role_candidates.items():
+                if max_roles and processed_count >= max_roles:
+                    break
+
+                if len(candidates) == 0:
+                    continue
+
+                logger.info(f"Processing urgent outreach for role {role_id} with {len(candidates)} candidates")
+
+                result = self.process_outreach_for_role(role_id, candidates)
+                result['role_id'] = role_id
+                results.append(result)
+
+                processed_count += 1
+
+            successful = len([r for r in results if r['status'] == 'success'])
+
+            logger.info(f"Batch urgent outreach completed: {successful}/{len(results)} roles processed successfully")
+
+            return {
+                'status': 'completed',
+                'roles_processed': len(results),
+                'successful': successful,
+                'failed': len(results) - successful,
+                'results': results
+            }
+
+        except Exception as e:
+            logger.error(f"Error in batch urgent outreach: {e}")
+            return {'status': 'failed', 'error': str(e)}
+
+    def get_urgent_candidates_by_role(self, limit_per_role: int = 3) -> Dict[str, List[Dict]]:
+        """
+        Group top urgency candidates by intern role based on match scores
+        Only includes candidates who meet the urgency condition and have not already been pitched to the role.
+        Ensures each candidate appears only once across all roles' top 3 lists.
+        Returns:
+            Dictionary with intern_role_id as key and list of top candidates as value
+        """
+        try:
+            matches = JobMatch.objects.filter(
+                status='active',
+                match_score__gte=0.2
+            ).order_by('intern_role_id', '-match_score')
+
+            role_candidates = {}
+            used_candidate_ids = set()
+
+            for match in matches:
+                role_id = match.intern_role_id
+                candidate_id = match.contact_id
+                urgency_contact = Contact.objects.filter(id=match.contact_id).first()
+                if not urgency_contact or not self.check_urgency(urgency_contact):
+                    # Only include urgency candidates
+                    continue
+
+                # Check if this candidate has already been pitched to this role
+                if CandidateOutreachHistory.objects.filter(
+                    contact_id=candidate_id, intern_role_id=role_id
+                ).exists():
+                    continue
+
+                # Ensure candidate is not already used in another role's top 3
+                if candidate_id in used_candidate_ids:
+                    continue
+
+                if role_id not in role_candidates:
+                    role_candidates[role_id] = []
+
+                # Only add if we haven't reached the limit for this role
+                if len(role_candidates[role_id]) < limit_per_role:
+                    try:
+                        contact = Contact.objects.get(id=match.contact_id)
+                        candidate_info = {
+                            'contact_id': contact.id,
+                            'contact': contact,
+                            'match_score': match.match_score,
+                            'full_name': contact.full_name,
+                            'email': contact.email,
+                            'start_date': contact.start_date,
+                            'end_date': contact.end_date,
+                            'student_bio': contact.student_bio,
+                            'requires_visa': contact.requires_a_visa,
+                            'partnership_specialist_id': contact.partnership_specialist_id,
+                            'skills': contact.skills,
+                            'university_name': contact.university_name,
+                            'graduation_date': contact.graduation_date,
+                            'industry_choice_1': contact.industry_choice_1,
+                            'industry_choice_2': contact.industry_choice_2,
+                            'industry_choice_3': contact.industry_choice_3,
+                        }
+                        role_candidates[role_id].append(candidate_info)
+                        used_candidate_ids.add(candidate_id)
+                    except Contact.DoesNotExist:
+                        continue
+
+            filtered_role_candidates = {k: v for k, v in role_candidates.items() if v}
+            logger.info(f"Found urgency candidates for {len(filtered_role_candidates)} roles")
+            return filtered_role_candidates
+        except Exception as e:
+            logger.error(f"Error getting urgent candidates by role: {e}")
+            return {}
     
     def __init__(self):
         self.email_templates = {
             'initial': self._get_initial_email_template(),
             'follow_up': self._get_follow_up_template(),
-            'final': self._get_final_template()
+            'final': self._get_final_template(),
+        }
+        self.urgent_email_templates = {
+            'initial': self._get_urgent_initial_email_template(),
+            'follow_up': self._get_urgent_follow_up_template(),
+            'final': self._get_urgent_final_template(),
         }
         
     def get_top_candidates_by_role(self, limit_per_role: int = 3) -> Dict[str, List[Dict]]:
@@ -77,21 +201,26 @@ class OutreachAutomation:
             ).order_by('intern_role_id', '-match_score')
             
             role_candidates = {}
-            
+            limit_per_candidate = {}
             for match in matches:
                 role_id = match.intern_role_id
                 candidate_id = match.contact_id
-                
+                urgency_contact = Contact.objects.filter(id=match.contact_id).first()
+                if not urgency_contact or self.check_urgency(urgency_contact):
+                    logger.info(f"Skipping candidate {candidate_id} for role {role_id} - urgency condition met")
+                    continue
+
                 # Check if this candidate has already been pitched to this role
-                already_pitched = CandidateOutreachHistory.objects.filter(
-                    contact_id=candidate_id,
-                    intern_role_id=role_id
-                ).exists()
-                
-                if already_pitched:
+                if CandidateOutreachHistory.objects.filter(
+                    contact_id=candidate_id, intern_role_id=role_id
+                ).exists():
                     logger.debug(f"Skipping candidate {candidate_id} for role {role_id} - already pitched")
                     continue
-                
+
+                if limit_per_candidate.get(match.contact_id, 0) > 3:
+                    logger.info(f"Skipping candidate {candidate_id} for role {role_id} - reached limit")
+                    continue
+
                 if role_id not in role_candidates:
                     role_candidates[role_id] = []
                 
@@ -120,7 +249,11 @@ class OutreachAutomation:
                         }
                         
                         role_candidates[role_id].append(candidate_info)
-                        
+                        if match.contact_id in limit_per_candidate:
+                            limit_per_candidate[match.contact_id] += 1
+                        else:
+                            limit_per_candidate[match.contact_id] = 1
+
                     except Contact.DoesNotExist:
                         logger.warning(f"Contact {match.contact_id} not found for match {match.id}")
                         continue
@@ -362,22 +495,24 @@ class OutreachAutomation:
             logger.error(f"Error getting resume path for contact {contact_id}: {e}")
             return None
 
-    def create_outreach_email(self, role: InternRole, candidates: List[Dict], company_contacts: List[Dict], email_type: str = 'initial', parent_outreach_log: Optional[OutreachLog] = None) -> Dict[str, Any]:
+    def create_outreach_email(self, role: InternRole, candidates: List[Dict], company_contacts: List[Dict], email_type: str = 'initial', parent_outreach_log: Optional[OutreachLog] = None, urgent: bool = False) -> Dict[str, Any]:
         """
         Create outreach email content with candidate information using new batch template format
         Includes message ID generation for tracking and threading
+        Uses different templates for urgent and non-urgent candidates
         """
         try:
-            # Get the email template
-            template = self.email_templates.get(email_type, self.email_templates['initial'])
-            
+            # Choose template set
+            templates = self.urgent_email_templates if urgent else self.email_templates
+            template = templates.get(email_type, templates['initial'])
+
             # Generate message ID for this email
             message_id = self.generate_message_id(email_type)
-            
+
             # Generate or reuse thread ID for email threading
             thread_id = ""
             in_reply_to = ""
-            
+
             if email_type == 'initial':
                 # For initial emails, create new thread
                 thread_id = self.generate_thread_id(role.id, role.intern_company_id or "unknown")
@@ -389,7 +524,7 @@ class OutreachAutomation:
                 else:
                     # Fallback if no parent found
                     thread_id = self.generate_thread_id(role.id, role.intern_company_id or "unknown")
-            
+
             # Get industry from role's company account
             industry = ""
             try:
@@ -402,7 +537,7 @@ class OutreachAutomation:
                             industry = account.company_industry
                         elif account.industry:
                             industry = account.industry
-                
+
                 # Fallback to role title if no industry found
                 if not industry and hasattr(role, 'role_title') and role.role_title:
                     industry = role.role_title
@@ -410,7 +545,7 @@ class OutreachAutomation:
             except Exception as e:
                 logger.warning(f"Could not get industry for role {role.id}: {e}")
                 industry = ""
-            
+
             # Get contact name from first company contact
             contact_name = ""
             if company_contacts and len(company_contacts) > 0:
@@ -428,61 +563,73 @@ class OutreachAutomation:
                 ),
                 "Beyond Academy Team"
             )
-            
+
             # Prepare candidate information for initial email only
             candidate_sections = []
             attachments = []
-            
+
             if email_type == 'initial':
                 for candidate in candidates:
-        
-                    # Get specific area within industry
-                    specific_area = candidate.get("industry") or candidate.get("industry_choice_1") or candidate.get("industry_choice_2") or ""
-
-                    # Get start date and duration
-                    start_date = candidate.get('start_date')
-                    if start_date:
-                        date_str = start_date.strftime('%B %Y') if hasattr(start_date, 'strftime') else str(start_date)
+                    # For urgent, only one candidate per email (per your template)
+                    if urgent:
+                        # Get specific area within industry
+                        specific_area = candidate.get("industry") or candidate.get("industry_choice_1") or candidate.get("industry_choice_2") or ""
+                        start_date = candidate.get('start_date')
+                        date_str = start_date.strftime('%B %Y') if start_date and hasattr(start_date, 'strftime') else str(start_date) if start_date else ""
                         duration_str = f" for {candidate['duration']}" if candidate.get('duration') else ""
-                        availability_info = f"Available: {date_str}{duration_str}"
-                    else:
-                        availability_info = ""
-
-                    # Refine bio if available
-                    refined_bio = (
-                        self.refine_candidate_bio_with_gpt(candidate['student_bio'], candidate)
-                        if candidate.get('student_bio')
-                        else ""
-                    )
-
-                    # Format candidate information according to new template
-                    specific_area_text = f" – Interested in {specific_area}" if specific_area else ""
-                    candidate_info = f"""{candidate['full_name']}{specific_area_text}
+                        availability_info = f"Availability: {date_str}{duration_str}" if date_str else ""
+                        refined_bio = (
+                            self.refine_candidate_bio_with_gpt(candidate['student_bio'], candidate)
+                            if candidate.get('student_bio') else ""
+                        )
+                        candidate_info = f"""{industry} Intern – {candidate['full_name']}
 {availability_info}
 {refined_bio}"""
-                    
-                    candidate_sections.append(candidate_info)
-                    
-                    # Add resume as attachment if available
-                    resume_path = self.get_candidate_resume_path(candidate['contact_id'])
-                    if resume_path:
-                        attachments.append({
-                            'path': resume_path,
-                            'name': f"{candidate['full_name']}_Resume.pdf"
-                        })
-            
+                        candidate_sections.append(candidate_info)
+                        resume_path = self.get_candidate_resume_path(candidate['contact_id'])
+                        if resume_path:
+                            attachments.append({
+                                'path': resume_path,
+                                'name': f"{candidate['full_name']}_Resume.pdf"
+                            })
+                        break  # Only one candidate per urgent email
+                    else:
+                        # Non-urgent: batch multiple candidates
+                        specific_area = candidate.get("industry") or candidate.get("industry_choice_1") or candidate.get("industry_choice_2") or ""
+                        start_date = candidate.get('start_date')
+                        date_str = start_date.strftime('%B %Y') if start_date and hasattr(start_date, 'strftime') else str(start_date) if start_date else ""
+                        duration_str = f" for {candidate['duration']}" if candidate.get('duration') else ""
+                        availability_info = f"Available: {date_str}{duration_str}" if date_str else ""
+                        refined_bio = (
+                            self.refine_candidate_bio_with_gpt(candidate['student_bio'], candidate)
+                            if candidate.get('student_bio') else ""
+                        )
+                        specific_area_text = f" – Interested in {specific_area}" if specific_area else ""
+                        candidate_info = f"""{candidate['full_name']}{specific_area_text}
+{availability_info}
+{refined_bio}"""
+                        candidate_sections.append(candidate_info)
+                        resume_path = self.get_candidate_resume_path(candidate['contact_id'])
+                        if resume_path:
+                            attachments.append({
+                                'path': resume_path,
+                                'name': f"{candidate['full_name']}_Resume.pdf"
+                            })
+
             # Prepare email content
             subject = template['subject'].format(
-                industry=industry
+                industry=industry,
+                intern_name=candidates[0]['full_name'] if urgent and candidates else ""
             )
-            
+
             body = template['body'].format(
                 industry=industry,
                 contact_name=contact_name,
                 candidates_info='\n\n'.join(candidate_sections) if candidate_sections else "",
-                partnership_specialist=partnership_specialist
+                partnership_specialist=partnership_specialist,
+                intern_name=candidates[0]['full_name'] if urgent and candidates else ""
             )
-            
+
             return {
                 'subject': subject,
                 'body': body,
@@ -492,10 +639,68 @@ class OutreachAutomation:
                 'thread_id': thread_id,
                 'in_reply_to': in_reply_to
             }
-            
+
         except Exception as e:
             logger.error(f"Error creating outreach email: {e}")
             return {}
+
+    def _get_urgent_initial_email_template(self) -> Dict[str, str]:
+        return {
+            'subject': 'Outstanding Intern Available – {industry}',
+            'body': '''Hi {contact_name},
+
+I’m reaching out to introduce an outstanding {industry} intern who could make a real impact on your team. As you are aware, partnering with Beyond Academy is completely free, and we provide motivated, pre-vetted talent ready to contribute from day one.
+
+Do you think you might have a suitable opportunity available?
+
+Here’s a snapshot of the intern’s profile:
+
+{candidates_info}
+
+As start dates are approaching, we’d like to move quickly. Would you be open to scheduling interviews?
+
+Many thanks
+{partnership_specialist}
+Beyond Academy
+https://beyondacademy.com/
+
+Tokyo - Seoul - Bangkok - Sydney - London - Dublin - Berlin - Barcelona - Paris - Stockholm - Amsterdam - New York - Toronto - San Francisco'''
+        }
+
+    def _get_urgent_follow_up_template(self) -> Dict[str, str]:
+        return {
+            'subject': 'Following up – Outstanding {industry} Intern Available',
+            'body': '''Hi {contact_name},
+
+Just following up on my previous email about an exceptional {industry} intern we’d love to connect with your team. Since start dates are fast approaching, we’re keen to move quickly to secure a suitable placement.
+
+Would you be open to a brief call or setting up interviews to explore whether this opportunity could be a good fit?
+
+Many thanks
+{partnership_specialist}
+Beyond Academy
+https://beyondacademy.com/
+
+Tokyo - Seoul - Bangkok - Sydney - London - Dublin - Berlin - Barcelona - Paris - Stockholm - Amsterdam - New York - Toronto - San Francisco'''
+        }
+
+    def _get_urgent_final_template(self) -> Dict[str, str]:
+        return {
+            'subject': 'Last call – {industry} Intern Availability',
+            'body': '''Hi {contact_name},
+
+I wanted to make one final check-in regarding the {industry} intern I introduced earlier. They are eager to contribute their skills and experience to a forward-thinking organisation, and we’d love to see if your team could be the right fit.
+
+If now isn’t the right time, no worries, but if you’d like to explore this, we’d be happy to set up interviews before placements are finalised.
+
+Looking forward to your reply.
+Many thanks
+{partnership_specialist}
+Beyond Academy
+https://beyondacademy.com/
+
+Tokyo - Seoul - Bangkok - Sydney - London - Dublin - Berlin - Barcelona - Paris - Stockholm - Amsterdam - New York - Toronto - San Francisco'''
+        }
     
     def send_email(self, 
                   email_content: Dict[str, Any], 
@@ -599,11 +804,14 @@ class OutreachAutomation:
         try:
             # Get the intern role
             role = InternRole.objects.get(id=intern_role_id)
+            # Check urgency for any candidate
+            is_urgent = any(self.check_urgency(candidate['contact']) for candidate in candidates)
             
-            # Check if we can send email to this company (weekly limit)
-            if role.intern_company_id and not self.can_send_email_to_company(role.intern_company_id):
-                logger.info(f"Email limit reached for company {role.intern_company_id}, skipping role {intern_role_id}")
-                return {'status': 'skipped', 'reason': 'email_limit_reached'}
+            if not is_urgent:
+                # Check if we can send email to this company (weekly limit)
+                if role.intern_company_id and not self.can_send_email_to_company(role.intern_company_id):
+                    logger.info(f"Email limit reached for company {role.intern_company_id}, skipping role {intern_role_id}")
+                    return {'status': 'skipped', 'reason': 'email_limit_reached'}
             
             # Get company contact emails
             company_contacts = self.get_company_contact_emails(intern_role_id)
@@ -611,8 +819,7 @@ class OutreachAutomation:
                 logger.warning(f"No partner contacts found for role {intern_role_id}")
                 return {'status': 'skipped', 'reason': 'no_company_contacts'}
             
-            # Check urgency for any candidate
-            is_urgent = any(self.check_urgency(candidate['contact']) for candidate in candidates)
+            
             
             # Determine sender (partnership specialist)
             sender_info = None
@@ -766,7 +973,7 @@ class OutreachAutomation:
                         status='active'
                     )
                     
-                    logger.info(f"Created outreach history for candidate {candidate['contact_id']} → role {role_id} (Cycle {cycle_number})")
+                    logger.info(f"Created outreach history for candidate {candidate['contact_id']} -> role {role_id} (Cycle {cycle_number})")
                     
                 except Exception as e:
                     logger.error(f"Error creating outreach history for candidate {candidate['contact_id']}: {e}")
@@ -960,13 +1167,25 @@ def run_outreach_automation(dry_run: bool = False, max_roles: int = None) -> Dic
     automation = OutreachAutomation()
     
     if dry_run:
-        # In dry run mode, just return the candidates that would be processed
-        role_candidates = automation.get_top_candidates_by_role()
+        # In dry run mode, just return the candidates that would be processed (both normal and urgent)
+        top_role_candidates = automation.get_top_candidates_by_role()
+        urgent_role_candidates = automation.get_urgent_candidates_by_role()
         return {
             'status': 'dry_run_completed',
-            'roles_found': len(role_candidates),
-            'total_candidates': sum(len(candidates) for candidates in role_candidates.values()),
-            'role_candidates': role_candidates
+            'roles_found': len(top_role_candidates),
+            'total_candidates': sum(len(candidates) for candidates in top_role_candidates.values()),
+            'role_candidates': top_role_candidates,
+            'urgent_roles_found': len(urgent_role_candidates),
+            'urgent_total_candidates': sum(len(candidates) for candidates in urgent_role_candidates.values()),
+            'urgent_role_candidates': urgent_role_candidates
         }
     else:
-        return automation.run_batch_outreach(max_roles=max_roles)
+        # To run urgent outreach, call automation.run_urgent_outreach_batch(max_roles=max_roles)
+        # To run normal outreach, call automation.run_batch_outreach(max_roles=max_roles)
+        # By default, run both and return results
+        normal_result = automation.run_batch_outreach(max_roles=max_roles)
+        urgent_result = automation.run_urgent_outreach_batch(max_roles=max_roles)
+        return {
+            'normal_outreach': normal_result,
+            'urgent_outreach': urgent_result
+        }
