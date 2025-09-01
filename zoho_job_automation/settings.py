@@ -288,3 +288,14 @@ EMAIL_HOST_USER = os.getenv('GMAIL_EMAIL')
 EMAIL_HOST_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
 DEFAULT_FROM_EMAIL = os.getenv('GMAIL_EMAIL', 'noreply@beyondacademy.com')
 EMAIL_TIMEOUT = 30
+
+# IMAP settings for email reply parsing
+IMAP_SERVER = 'imap.gmail.com'  # e.g., 'imap.gmail.com' for Gmail
+IMAP_USER = os.getenv('GMAIL_EMAIL')      # Your email address
+IMAP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')  # Your email password or app-specific password
+
+# IMAP processing: how many messages to process per connection and delay between batches
+# Tune these for your mailbox and server stability. Smaller batch_size reduces chance of
+# long-lived connection drops. batch_delay is seconds to sleep between batches.
+IMAP_BATCH_SIZE = 25
+IMAP_BATCH_DELAY_SECONDS = 1

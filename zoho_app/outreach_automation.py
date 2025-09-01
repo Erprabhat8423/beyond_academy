@@ -49,7 +49,20 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 
+
 class OutreachAutomation:
+
+    def __init__(self):
+        self.email_templates = {
+            'initial': self._get_initial_email_template(),
+            'follow_up': self._get_follow_up_template(),
+            'final': self._get_final_template(),
+        }
+        self.urgent_email_templates = {
+            'initial': self._get_urgent_initial_email_template(),
+            'follow_up': self._get_urgent_follow_up_template(),
+            'final': self._get_urgent_final_template(),
+        }
 
     def run_urgent_outreach_batch(self, max_roles: int = None) -> Dict[str, Any]:
         """
@@ -172,18 +185,6 @@ class OutreachAutomation:
         except Exception as e:
             logger.error(f"Error getting urgent candidates by role: {e}")
             return {}
-    
-    def __init__(self):
-        self.email_templates = {
-            'initial': self._get_initial_email_template(),
-            'follow_up': self._get_follow_up_template(),
-            'final': self._get_final_template(),
-        }
-        self.urgent_email_templates = {
-            'initial': self._get_urgent_initial_email_template(),
-            'follow_up': self._get_urgent_follow_up_template(),
-            'final': self._get_urgent_final_template(),
-        }
         
     def get_top_candidates_by_role(self, limit_per_role: int = 3) -> Dict[str, List[Dict]]:
         """
@@ -297,7 +298,6 @@ class OutreachAutomation:
 
         return []
     
- 
     def get_partnership_specialist_email(self, partnership_specialist_id: str) -> Optional[Dict[str, Any]]:
         """
         Get partnership specialist email from Zoho Users API
@@ -330,7 +330,6 @@ class OutreachAutomation:
             logger.error(f"Error fetching Zoho user {partnership_specialist_id}: {e}")
         return None
 
-    
     def check_urgency(self, contact: Contact) -> bool:
         """
         Check if outreach should be urgent based on visa requirements and start date
@@ -621,6 +620,15 @@ class OutreachAutomation:
                 industry=industry,
                 intern_name=candidates[0]['full_name'] if urgent and candidates else ""
             )
+            if email_type != 'initial' and parent_outreach_log and parent_outreach_log.subject:
+                subject = f"Re: {parent_outreach_log.subject}"
+            elif email_type != 'initial':
+                # Fallback for follow-ups if parent subject is not available
+                base_subject = template['subject'].format(
+                    industry=industry,
+                    intern_name=candidates[0]['full_name'] if urgent and candidates else ""
+                )
+                subject = f"Re: {base_subject}"
 
             body = template['body'].format(
                 industry=industry,
@@ -736,7 +744,7 @@ Tokyo - Seoul - Bangkok - Sydney - London - Dublin - Berlin - Barcelona - Paris 
                 from_email=f"{sender_name} <{settings.EMAIL_HOST_USER}>" if sender_name else settings.EMAIL_HOST_USER,
                 to=["prabhat.scaleupally@gmail.com"],
                 # to=recipients,
-                reply_to=[sender_email,"prabhat.scaleupally@gmail.com"] if sender_email != settings.EMAIL_HOST_USER else None
+                reply_to=[sender_email,"dev1scaleupally@gmail.com"] if sender_email != settings.EMAIL_HOST_USER else None
             )
             
             # Add message tracking headers
@@ -749,8 +757,8 @@ Tokyo - Seoul - Bangkok - Sydney - London - Dublin - Berlin - Barcelona - Paris 
                 logger.info(f"Message-ID: {message_id}")
             
             if thread_id:
-                email.extra_headers['Thread-ID'] = thread_id
-                logger.info(f"Thread-ID: {thread_id}")
+                email.extra_headers['Thread-Index'] = thread_id
+                logger.info(f"Thread-Index: {thread_id}")
             
             if in_reply_to:
                 email.extra_headers['In-Reply-To'] = in_reply_to

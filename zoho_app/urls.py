@@ -33,5 +33,5 @@ urlpatterns = [
     path('api/outreach/analytics/', outreach_views.get_outreach_analytics, name='outreach_analytics'),
     path('api/outreach/follow-up/trigger/', outreach_views.trigger_follow_up_workflow, name='trigger_follow_up'),
     path('api/outreach/follow-up/pending/', outreach_views.get_pending_follow_ups, name='pending_follow_ups'),
-    path('api/outreach/response/<int:outreach_log_id>/', outreach_views.mark_outreach_response, name='mark_response'),
+    path('api/outreach/process-email-replies/', outreach_views.process_email_replies_view, name='process_email_replies'),
 ]

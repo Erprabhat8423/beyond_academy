@@ -15,6 +15,7 @@ from datetime import timedelta
 from zoho_app.models import OutreachLog, FollowUpTask, Contact, InternRole, JobMatch
 from zoho_app.outreach_automation import run_outreach_automation
 from zoho_app.follow_up_workflow import process_follow_up_workflow
+from zoho_app.email_reply_parser import EmailReplyParser
 
 logger = logging.getLogger(__name__)
 
@@ -150,52 +151,6 @@ def trigger_follow_up_workflow(request):
             'error': str(e)
         }, status=500)
 
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def mark_outreach_response(request, outreach_log_id):
-    """
-    Mark that a response was received for an outreach email
-    """
-    try:
-        data = json.loads(request.body.decode('utf-8'))
-        response_type = data.get('response_type', 'interested')  # interested, not_interested, request_more_info
-        
-        outreach_log = OutreachLog.objects.get(id=outreach_log_id)
-        outreach_log.response_received = True
-        outreach_log.response_date = timezone.now()
-        outreach_log.response_type = response_type
-        outreach_log.save()
-        
-        # Cancel pending follow-ups
-        cancelled_tasks = FollowUpTask.objects.filter(
-            outreach_log=outreach_log,
-            completed=False
-        ).update(
-            completed=True,
-            completed_at=timezone.now()
-        )
-        
-        logger.info(f"Response marked for outreach {outreach_log_id}: {response_type}")
-        
-        return JsonResponse({
-            'status': 'success',
-            'outreach_log_id': outreach_log_id,
-            'response_type': response_type,
-            'cancelled_follow_ups': cancelled_tasks
-        })
-        
-    except OutreachLog.DoesNotExist:
-        return JsonResponse({
-            'status': 'error',
-            'error': 'Outreach log not found'
-        }, status=404)
-    except Exception as e:
-        logger.error(f"Error marking outreach response: {e}")
-        return JsonResponse({
-            'status': 'error',
-            'error': str(e)
-        }, status=500)
 
 
 @require_http_methods(["GET"])
@@ -359,6 +314,28 @@ def get_pending_follow_ups(request):
         
     except Exception as e:
         logger.error(f"Error getting pending follow-ups: {e}")
+        return JsonResponse({
+            'status': 'error',
+            'error': str(e)
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def process_email_replies_view(request):
+    """
+    Trigger processing of email replies (same as management command `process_email_replies`).
+    Use POST to invoke; returns processing results.
+    """
+    try:
+        parser = EmailReplyParser()
+        results = parser.process_replies()
+        return JsonResponse({
+            'status': 'success',
+            'results': results
+        })
+    except Exception as e:
+        logger.error(f"Error processing email replies via HTTP: {e}")
         return JsonResponse({
             'status': 'error',
             'error': str(e)

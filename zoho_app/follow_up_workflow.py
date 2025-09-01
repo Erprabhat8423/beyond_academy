@@ -4,8 +4,7 @@ Follow-up Workflow Management
 This module handles the automated follow-up sequence for outreach emails:
 - Follow-up 1: after 48h
 - Follow-up 2: after 96h (48h after follow-up 1)
-- Follow-up 3: after 144h (48h after follow-up 2)
-- Move to next 3 roles: after 192h (48h after follow-up 3) if no response
+- Move to next 3 roles: after 192h (48h after follow-up 2) if no response
 """
 
 import json
