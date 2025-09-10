@@ -206,7 +206,7 @@ class OutreachAutomation:
             for match in matches:
                 role_id = match.intern_role_id
                 candidate_id = match.contact_id
-                urgency_contact = Contact.objects.filter(id=match.contact_id).first()
+                urgency_contact = Contact.objects.filter(id=match.contact_id,student_status='ACTIVE: Placement').exclude(role_success_stage='Role Confirmed').first()
                 if not urgency_contact or self.check_urgency(urgency_contact):
                     logger.info(f"Skipping candidate {candidate_id} for role {role_id} - urgency condition met")
                     continue
@@ -741,10 +741,10 @@ Tokyo - Seoul - Bangkok - Sydney - London - Dublin - Berlin - Barcelona - Paris 
             email = EmailMessage(
                 subject=subject,
                 body=body,
-                from_email=f"{sender_name} <{settings.EMAIL_HOST_USER}>" if sender_name else settings.EMAIL_HOST_USER,
+                from_email=f"{sender_name} <{sender_email}>" if sender_name else settings.EMAIL_HOST_USER,
                 to=["prabhat.scaleupally@gmail.com"],
                 # to=recipients,
-                reply_to=[sender_email,"dev1scaleupally@gmail.com"] if sender_email != settings.EMAIL_HOST_USER else None
+                reply_to=[sender_email,"molly@beyondacademy.com"] if sender_email != settings.EMAIL_HOST_USER else None
             )
             
             # Add message tracking headers
@@ -1188,9 +1188,6 @@ def run_outreach_automation(dry_run: bool = False, max_roles: int = None) -> Dic
             'urgent_role_candidates': urgent_role_candidates
         }
     else:
-        # To run urgent outreach, call automation.run_urgent_outreach_batch(max_roles=max_roles)
-        # To run normal outreach, call automation.run_batch_outreach(max_roles=max_roles)
-        # By default, run both and return results
         normal_result = automation.run_batch_outreach(max_roles=max_roles)
         urgent_result = automation.run_urgent_outreach_batch(max_roles=max_roles)
         return {

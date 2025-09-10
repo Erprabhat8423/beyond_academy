@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from django.db import transaction
 from django.utils import timezone
-from zoho_app.models import OutreachLog, FollowUpTask, Contact, InternRole, JobMatch, CandidateOutreachHistory
+from zoho_app.models import OutreachLog, FollowUpTask, Contact, InternRole, JobMatch, CandidateOutreachHistory, Account
 from zoho_app.outreach_automation import OutreachAutomation
 
 logger = logging.getLogger(__name__)
@@ -124,6 +124,26 @@ class FollowUpWorkflow:
         Send a follow-up email for an outreach, using urgent or non-urgent templates as appropriate
         """
         try:
+            # If the target company is marked Do-Not-Contact (DNC), skip this outreach
+            company_id = outreach_log.company_id
+            if company_id:
+                try:
+                    account = Account.objects.get(id=company_id)
+                    is_company_dnc = bool(getattr(account, 'is_dnc', False)) or (getattr(account, 'tag', '') or '').lower().find('dnc') != -1
+                    if is_company_dnc:
+                        logger.info(f"Skipping follow-up task {task.id} - company {company_id} is DNC")
+                        task.completed = True
+                        task.completed_at = timezone.now()
+                        task.save()
+                        return {
+                            'task_id': task.id,
+                            'status': 'skipped',
+                            'reason': 'company_dnc'
+                        }
+                except Account.DoesNotExist:
+                    # If account not found, proceed normally
+                    pass
+
             candidate_ids = json.loads(outreach_log.candidate_ids)
             recipients = json.loads(outreach_log.recipients)
             role = InternRole.objects.get(id=outreach_log.intern_role_id)
@@ -131,6 +151,16 @@ class FollowUpWorkflow:
             for candidate_id in candidate_ids:
                 try:
                     contact = Contact.objects.get(id=candidate_id)
+                    # Skip contact if not active for placement
+                    if (getattr(contact, 'student_status', None) or '').strip() != 'ACTIVE: Placement':
+                        logger.info(f"Skipping contact {candidate_id} for follow-up - student_status={contact.student_status}")
+                        continue
+
+                    # Skip contact if role already confirmed
+                    if (getattr(contact, 'role_success_stage', None) or '').strip() == 'Role Confirmed':
+                        logger.info(f"Skipping contact {candidate_id} for follow-up - role_success_stage=Role Confirmed")
+                        continue
+
                     candidates.append({
                         'contact_id': contact.id,
                         'contact': contact,
@@ -253,8 +283,38 @@ class FollowUpWorkflow:
             moved_candidates = []
             new_outreach_initiated = []
             
+            # If the target company is DNC, do not move candidates for this outreach
+            company_id = outreach_log.company_id
+            if company_id:
+                try:
+                    account = Account.objects.get(id=company_id)
+                    if bool(getattr(account, 'is_dnc', False)) or (getattr(account, 'tag', '') or '').lower().find('dnc') != -1:
+                        logger.info(f"Skipping move-to-next for task {task.id} - company {company_id} is DNC")
+                        task.completed = True
+                        task.completed_at = timezone.now()
+                        task.save()
+                        return {
+                            'task_id': task.id,
+                            'status': 'skipped',
+                            'reason': 'company_dnc'
+                        }
+                except Account.DoesNotExist:
+                    pass
+
             for candidate_id in candidate_ids:
                 try:
+                    # Ensure contact still active and not role confirmed before moving
+                    try:
+                        contact_check = Contact.objects.get(id=candidate_id)
+                        if (getattr(contact_check, 'student_status', None) or '').strip() != 'ACTIVE: Placement':
+                            logger.info(f"Skipping candidate {candidate_id} - student_status={contact_check.student_status}")
+                            continue
+                        if (getattr(contact_check, 'role_success_stage', None) or '').strip() == 'Role Confirmed':
+                            logger.info(f"Skipping candidate {candidate_id} - role_success_stage=Role Confirmed")
+                            continue
+                    except Contact.DoesNotExist:
+                        logger.warning(f"Contact {candidate_id} not found when moving to next roles")
+                        continue
                     # Get next 3 best matching roles for this candidate
                     next_role_ids = self.get_next_roles_for_candidate(candidate_id, outreach_log.intern_role_id)
                     
@@ -359,6 +419,23 @@ class FollowUpWorkflow:
         """
         try:
             contact = Contact.objects.get(id=candidate_id)
+            # Validate contact before initiating outreach
+            if (getattr(contact, 'student_status', None) or '').strip() != 'ACTIVE: Placement':
+                logger.info(f"Not initiating outreach for {candidate_id} - student_status={contact.student_status}")
+                return {
+                    'status': 'failed',
+                    'candidate_id': candidate_id,
+                    'role_id': role_id,
+                    'reason': 'inactive_or_not_placement'
+                }
+            if (getattr(contact, 'role_success_stage', None) or '').strip() == 'Role Confirmed':
+                logger.info(f"Not initiating outreach for {candidate_id} - role_success_stage=Role Confirmed")
+                return {
+                    'status': 'failed',
+                    'candidate_id': candidate_id,
+                    'role_id': role_id,
+                    'reason': 'role_confirmed'
+                }
             role = InternRole.objects.get(id=role_id)
             candidate_info = {
                 'contact_id': contact.id,

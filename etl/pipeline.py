@@ -182,7 +182,7 @@ def sync_contacts(incremental=True):
         'Alternative_Location1', 'Country_city_of_residence',
         
         # Student and Academic fields
-        'Skills', 'Student_Status', 'University_Name', 'Graduation_Date', 'Student_Bio',
+        'Skills', 'Student_Status', 'University_Name', 'Graduation_Date', 'Student_Bio','Placement_Automation',
         'Uni_Start_Date', 'English_Level', 'Age_on_Start_Date', 'Date_of_Birth',
         
         # Placement and Role fields
@@ -307,6 +307,7 @@ def sync_contacts(incremental=True):
                         'university_name': contact_data.get('University_Name'),
                         'graduation_date': parse_datetime_field(contact_data.get('Graduation_Date')),
                         'student_bio': contact_data.get('Student_Bio'),
+                        'placement_automation': contact_data.get('Placement_Automation'),
                         'uni_start_date': parse_datetime_field(contact_data.get('Uni_Start_Date')),
                         'english_level': contact_data.get('English_Level'),
                         'age_on_start_date': contact_data.get('Age_on_Start_Date'),
@@ -454,6 +455,7 @@ def sync_contacts(incremental=True):
                         
                         # Additional field from your working ETL
                         'end_date_auto_populated': parse_datetime_field(contact_data.get('End_date_Auto_populated')),
+                        
                         
                         # Account ID relationship
                         'account_id': extract_nested_id(contact_data.get('Account_Name')),

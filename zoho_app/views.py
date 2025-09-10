@@ -92,20 +92,6 @@ class ZohoWebhookHandler:
                 # Fallback to webhook data if API fetch fails
                 logger.warning(f"Could not fetch from API, using webhook data for contact {contact_id}")
             
-            # # Step 2: Always update local contact data with the most current information
-            # logger.info(f"Step 6. *********Updating local contact data for {contact_id} *********")
-            # self.update_local_contact(contact_info)
-            
-            # Step 3: Sync related account data if contact has account association
-            # account_id = contact_info.get('Account_Name', {}).get('id') if isinstance(contact_info.get('Account_Name'), dict) else None
-            # if account_id:
-            #     logger.info(f"Step 9. *********Syncing related account data for account {account_id} *********")
-            #     self.sync_related_account(account_id)
-            
-            # # Step 4: Trigger incremental sync for intern roles to keep job data fresh
-            # logger.info(f"Step 12. *********Triggering incremental sync for intern roles *********")
-            # self.sync_intern_roles_incremental()
-            
             # Check if this is a "Ready to Pitch" contact for CV processing
             role_success_stage = contact_info.get('Role_Success_Stage', '').strip()
             if not role_success_stage:
@@ -629,6 +615,7 @@ class ZohoWebhookHandler:
                         id=contact_id,
                         full_name=full_name or '',
                         email=contact_info.get('Email', ''),
+                        placement_automation=contact_info.get('Placement_Automation') or contact_info.get('placement_automation'),
                         role_success_stage=role_success_stage,
                         phone=contact_info.get('Phone', ''),
                         mobile=contact_info.get('Mobile', ''),
@@ -709,7 +696,6 @@ class ZohoWebhookHandler:
             if accounts and len(accounts) > 0:
                 account_data = accounts[0]
                 logger.info(f"Successfully fetched account {account_id} from API")
-                logger.info(f"Account data: {account_data}")
                 return account_data
             else:
                 logger.warning(f"No account data found for {account_id}")
@@ -1287,6 +1273,65 @@ class ZohoWebhookHandler:
         return results
 
 
+
+# Simple PK-listing view for accounts / contacts / intern roles
+from django.shortcuts import render
+
+def pk_list_tabs_view(request):
+    """
+    Render a simple page with three tabs (accounts, contacts, intern_roles).
+    Supports filtering by exact pk or range (pk_min, pk_max) and pagination.
+    Query params:
+      - tab: accounts|contacts|intern_roles (default: contacts)
+      - pk: exact pk value
+      - pk_min, pk_max: range filter (inclusive)
+      - page: page number
+      - per_page: items per page
+    """
+    tab = request.GET.get('tab', 'contacts')
+    pk = request.GET.get('pk')
+    pk_min = request.GET.get('pk_min')
+    pk_max = request.GET.get('pk_max')
+    try:
+        per_page = int(request.GET.get('per_page', 25))
+    except Exception:
+        per_page = 25
+    page = request.GET.get('page', 1)
+
+    if tab == 'accounts':
+        qs = Account.objects.all().order_by('id')
+    elif tab == 'intern_roles':
+        qs = InternRole.objects.all().order_by('id')
+    else:
+        tab = 'contacts'
+        qs = Contact.objects.all().order_by('id')
+
+    # Apply PK filters. Since PKs are strings, use lexicographical filters which work
+    # for most cases. Exact match when 'pk' provided.
+    if pk:
+        qs = qs.filter(pk=pk)
+    else:
+        if pk_min:
+            qs = qs.filter(id__gte=pk_min)
+        if pk_max:
+            qs = qs.filter(id__lte=pk_max)
+
+    paginator = Paginator(qs, per_page)
+    try:
+        page_obj = paginator.page(page)
+    except PageNotAnInteger:
+        page_obj = paginator.page(1)
+    except EmptyPage:
+        page_obj = paginator.page(paginator.num_pages)
+
+    context = {
+        'tab': tab,
+        'items': page_obj.object_list,
+        'page_obj': page_obj,
+        'per_page': per_page,
+        'request': request,
+    }
+    return render(request, 'zoho_app/pk_list_tabs.html', context)
 # Lazy initialization of webhook handler
 webhook_handler = None
 
@@ -1522,6 +1567,7 @@ def sync_single_contact(contact_id):
                 'department': contact_data.get('Department'),
                 'updated_time': parse_datetime_field(contact_data.get('Modified_Time')),
                 'created_time': parse_datetime_field(contact_data.get('Created_Time')),
+                'placement_automation': contact_data.get('Placement_Automation') or contact_data.get('placement_automation'),
                 'full_name': contact_data.get('Full_Name'),
                 
                 # Location and Industry fields

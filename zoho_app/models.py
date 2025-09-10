@@ -168,6 +168,9 @@ class Contact(models.Model):
 
     partnership_specialist_id = models.CharField(max_length=255, null=True, blank=True)
 
+    # New field: Placement_Automation - can be null, 'Yes', 'No', or a date string
+    placement_automation = models.CharField(max_length=255, null=True, blank=True)
+
     def __str__(self):
         return self.full_name or self.email or self.id
 
