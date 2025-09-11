@@ -1857,7 +1857,7 @@ def get_job_matches(request, contact_id):
                 'location_match': match.location_match,
                 'work_policy_match': match.work_policy_match,
                 'skill_match': match.skill_match,
-                'matched_industries': json.loads(match.matched_industries or '[]'),
+                # 'matched_industries': json.loads(match.matched_industries or '[]'),
                 'matched_skills': json.loads(match.matched_skills or '[]'),
                 'match_reason': match.match_reason,
                 'created_at': match.created_at.isoformat()

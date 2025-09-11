@@ -30,6 +30,8 @@ import requests
 import re
 from zoho import auth
 from django.db.models import Q
+from django.conf import settings
+from django.core.mail import send_mail
 
 try:
     import openai
@@ -466,46 +468,7 @@ class JobMatcher:
         # print("GPT matched items:", valid_matches)
 
         return len(valid_matches) > 0, valid_matches
-    
-    # def check_industry_match_traditional(contact_interests: List[str], role_tags: List[str]) -> Tuple[bool, List[str]]:
-    #     """
-    #     Check if contact interests match with role tags.
-    #     Returns (is_match, matched_items)
-    #     Uses exact, partial, and fuzzy matching.
-    #     """
-    #     print(f"Checking industry match...", contact_interests, role_tags)
-    #     if not contact_interests or not role_tags:
-    #         return False, []
         
-    #     matched_items = []
-    #     contact_interests_lower = [interest.lower().strip() for interest in contact_interests]
-    #     role_tags_lower = [tag.lower().strip() for tag in role_tags]
-
-    #     #  Exact matches
-    #     for tag, tag_lower in zip(role_tags, role_tags_lower):
-    #         if tag_lower in contact_interests_lower:
-    #             matched_items.append(tag)
-
-    #     #  Partial substring matches
-    #     if not matched_items:
-    #         for tag, tag_lower in zip(role_tags, role_tags_lower):
-    #             for interest, interest_lower in zip(contact_interests, contact_interests_lower):
-    #                 if (tag_lower in interest_lower or interest_lower in tag_lower) and len(tag_lower) > 2:
-    #                     matched_items.append(f"{interest} ~ {tag}")
-    #                     break
-
-    #     #  Fuzzy similarity matches (handles typos / abbreviations)
-    #     if not matched_items:
-    #         threshold = 0.7  # similarity threshold (0–1)
-    #         for tag, tag_lower in zip(role_tags, role_tags_lower):
-    #             for interest, interest_lower in zip(contact_interests, contact_interests_lower):
-    #                 similarity = SequenceMatcher(None, tag_lower, interest_lower).ratio()
-    #                 if similarity >= threshold:
-    #                     matched_items.append(f"{interest} ≈ {tag}")
-    #                     break
-    #     print(f"Matched Items: {matched_items}")
-    #     return len(matched_items) > 0, matched_items
-    
     
     def check_location_match(self, contact: Contact, role: InternRole) -> bool:
         """
@@ -809,161 +772,193 @@ class JobMatcher:
             logger.error(f"Error checking start date priority for contact {contact.id} and role {role.id}: {e}")
             return False
     
-
-    def calculate_match_score(self, industry_match: bool, location_match: bool,
-                               skill_match: bool, matched_industries: List[str],
-                               matched_skills: List[str], start_date_priority: bool = False,
-                               rejected_deals_count: int = 0) -> float:
+    def calculate_match_score(self, industry_1_match: bool, industry_2_match: bool,
+                          skill_match: bool, matched_industry_1: List[str],
+                          matched_industry_2: List[str], matched_skills: List[str],
+                          start_date_priority: bool = False,
+                          rejected_deals_count: int = 0) -> float:
         """
-        Calculate overall match score based on different criteria
+        Calculate overall match score based on new industry weights and skill match.
         """
         score = 0.0
-        
-        # Industry match is most important (40% weight)
-        if industry_match:
-            score += 0.40 * min(1.0, len(matched_industries) / 3.0)
-            i_score = 0.40 * min(1.0, len(matched_industries) / 3.0)
-            logger.info(f"Industry match score: {i_score:.2f} with {len(matched_industries)} matched industries")
-        # Location match (20% weight)
-        if location_match:
-            score += 0.20
-            logger.info(f"Location match score: 0.20")
-        # Work policy match (20% weight)
-        # if work_policy_match:
-        #     score += 0.20
-        #     logger.info(f"Work policy match score: 0.20")
-        # Skill match (25% weight)
-        if skill_match:
-            score += 0.25 * min(1.0, len(matched_skills) / 5.0)
-            s_score = 0.25 * min(1.0, len(matched_skills) / 5.0)
-            logger.info(f"Skill match score: {s_score:.2f} with {len(matched_skills)} matched skills")
 
-        # Start date priority bonus (0.15 if within 2 weeks of confirmed role end date)
+        if industry_1_match:
+            score += 0.40 * min(1.0, len(matched_industry_1) / 1.0)
+            i_score = 0.40 * min(1.0, len(matched_industry_1) / 1.0)
+            logger.info(f"Industry match score: {i_score:.2f} with {len(matched_industry_1)} matched industries")
+        if industry_2_match:
+            score += 0.20 * min(1.0, len(matched_industry_2) / 1.0)
+            i2_score = 0.20 * min(1.0, len(matched_industry_2) / 1.0)
+            logger.info(f"Industry 2 match score: {i2_score:.2f} with {len(matched_industry_2)} matched industries")
+        if skill_match:
+            score += 0.25 * min(1.0, len(matched_skills) / 3.0)
+            s_score = 0.25 * min(1.0, len(matched_skills) / 3.0)
+            logger.info(f"Skill match score: {s_score:.2f} with {len(matched_skills)} matched skills")
         if start_date_priority:
             score += 0.15
             logger.info(f"Start date priority bonus applied: 0.15")
-
-        # Penalty for roles with 2+ rejected/closed deals (-0.15)
         if rejected_deals_count >= 2:
             score -= 0.15
             logger.info(f"Rejected deals penalty applied: {rejected_deals_count} rejected deals (-0.15)")
-        
+
         return max(0.0, min(1.0, score))
+
+    
+    
+    def get_contact_industries(self, contact: Contact) -> Tuple[List[str], List[str]]:
+        """
+        Extract industry_1 and industry_2 interests from contact fields.
+        """
+        industry_1 = []
+        industry_2 = []
+
+        if contact.industry_choice_1:
+            industry_1.append(contact.industry_choice_1)
+        if contact.industry_1_areas:
+            industry_1.extend(self.extract_json_field(contact.industry_1_areas))
+
+        if contact.industry_choice_2:
+            industry_2.append(contact.industry_choice_2)
+        if contact.industry_2_areas:
+            industry_2.extend(self.extract_json_field(contact.industry_2_areas))
+
+        # Normalize and deduplicate
+        industry_1 = list({i.strip().lower() for i in industry_1 if i})
+        industry_2 = list({i.strip().lower() for i in industry_2 if i})
+
+        return industry_1, industry_2
     
     def find_matches_for_contact(self, contact_id: str) -> List[Dict[str, Any]]:
         """
-        Find all potential matches for a given contact with enhanced filtering criteria
+        Find all potential matches for a given contact with new industry logic.
         """
         try:
             contact = Contact.objects.get(id=contact_id)
         except Contact.DoesNotExist:
-            # logger.error(f"Contact {contact_id} not found")
             return []
-        
-        # Get contact interests
-        contact_interests = self.get_contact_interests(contact)
-        
-        if not contact_interests:
-            logger.info(f"No interests found for contact {contact_id}")
-        
+
+        industry_1, industry_2 = self.get_contact_industries(contact)
         matches = []
-        
-        # Get all active intern roles
-        # roles = InternRole.objects.filter(role_status__icontains="Active")
-        roles = InternRole.objects.filter(Q(company_work_policy__icontains='Hybrid') | Q(company_work_policy__icontains='Office-based'))
+
+        roles = InternRole.objects.filter(Q(company_work_policy__icontains='Hybrid') | Q(company_work_policy__icontains='Office-based'))[:1] 
         for role in roles:
             try:
-                # Sync deal data for this role (with caching)
                 rejected_deals_count = self.sync_role_deals(role.id)
-                logger.info(f"Role {role.id} has {rejected_deals_count} rejected/closed deals")
-                
-                # Enhanced filtering criteria
-                
-                # 1. Check if company has is_dnc = True (exclude if True)
+
                 if self.check_company_dnc_status(role):
-                    logger.info(f"Excluding role {role.id} and company id {role.intern_company_id} - company is DNC")
                     continue
-                
-                # 2. Check if company follow_up_date is empty, today, or past (exclude if True)
-                # if self.check_company_follow_up_date(role):
-                #     logger.info(f"Excluding role {role.id} and company id {role.intern_company_id}- invalid follow_up_date")
-                #     continue
-                
-                # 3. Check if intern-to-employee ratio > 1:4 (exclude if True)
                 if self.check_intern_to_employee_ratio(role, contact):
-                    logger.info(f"Excluding role {role.id} and company id {role.intern_company_id} - intern-to-employee ratio exceeded")
                     continue
-                
-                # 4. Check if company has more than 3 active deals (exclude if True)
                 if self.check_active_deals_limit(role):
-                    logger.info(f"Excluding role {role.id} and company id {role.intern_company_id}- too many active deals")
                     continue
-                
-                # Existing matching criteria
-                
-                # Check industry match
+
                 role_tags = self.get_role_tags(role)
-                industry_match, matched_industries = self.check_industry_match(contact_interests, role_tags)
-                
-                # Check location match
-                location_match = self.check_location_match(contact, role)
-                
-                # Check work policy match
-                # work_policy_match = self.check_work_policy_match(contact, role)
-                
-                # Check skill match
+                # Check industry_1 match
+                industry_1_match, matched_industry_1 = self.check_industry_match(industry_1, role_tags)
+                # Check industry_2 match
+                industry_2_match, matched_industry_2 = self.check_industry_match(industry_2, role_tags)
+
+                # Skip job if no industry match
+                if not industry_1_match and not industry_2_match:
+                    continue
+
                 skill_match, matched_skills = self.check_skill_match(contact_id, role)
-                
-                # Check start date priority (within 2 weeks of confirmed role end date)
                 start_date_priority = self.check_start_date_priority(contact, role)
-                logger.info(f"Start date priority bonus applied: {start_date_priority} {role.intern_company_id} {role.id}")
-                # Calculate overall score
+
                 match_score = self.calculate_match_score(
-                    industry_match, location_match, skill_match,
-                    matched_industries, matched_skills, start_date_priority, rejected_deals_count
+                    industry_1_match, industry_2_match, skill_match,
+                    matched_industry_1, matched_industry_2, matched_skills,
+                    start_date_priority, rejected_deals_count
                 )
-                logger.info(f"Match score for contact {contact_id} with role {role.id}: {match_score:.2f}")
-                # Only include matches with some score
-                if match_score > 0.1:  # 10% minimum threshold
+
+                if match_score > 0.1:
                     match_reason_parts = []
-                    if industry_match:
-                        match_reason_parts.append(f"Industry: {', '.join(matched_industries[:3])}")
-                    if location_match:
-                        match_reason_parts.append("Location compatible")
+                    if industry_1_match:
+                        match_reason_parts.append(f"Industry 1: {', '.join(matched_industry_1[:3])}")
+                    if industry_2_match:
+                        match_reason_parts.append(f"Industry 2: {', '.join(matched_industry_2[:3])}")
                     if skill_match:
                         match_reason_parts.append(f"Skills: {', '.join(matched_skills[:3])}")
                     if start_date_priority:
                         match_reason_parts.append("Start date priority (+0.10)")
                     if rejected_deals_count >= 2:
                         match_reason_parts.append(f"Rejected deals penalty ({rejected_deals_count} deals, -0.10)")
-                    
-                    
+
                     matches.append({
                         'contact_id': contact_id,
                         'intern_role_id': role.id,
                         'match_score': match_score,
-                        'industry_match': industry_match,
-                        'location_match': location_match,
+                        'industry_1_match': industry_1_match,
+                        'industry_2_match': industry_2_match,
                         'skill_match': skill_match,
                         'start_date_priority': start_date_priority,
-                        'matched_industries': matched_industries,
+                        'matched_industry_1': matched_industry_1,
+                        'matched_industry_2': matched_industry_2,
                         'matched_skills': matched_skills,
                         'match_reason': '; '.join(match_reason_parts),
                         'role_title': role.role_title or role.name,
                         'company_name': role.intern_company_name,
                     })
-                    print("total job found",len(matches))
-                    
+
             except Exception as e:
                 logger.error(f"Error matching contact {contact_id} with role {role.id}: {e}")
                 continue
-        
-        # Sort matches by score descending
+
         matches.sort(key=lambda x: x['match_score'], reverse=True)
-        
-        logger.info(f"Found {len(matches)} matches for contact {contact_id} after enhanced filtering")
+
+        # Send email if no matches found
+        if not matches:
+            self.send_no_match_email(contact)
+
         return matches
+
     
+    def send_no_match_email(self, contact: Contact):
+        """
+        Send styled HTML email to molly@beyondacademy.com if no matches found for contact.
+        """
+        logger.info(f"Sending no-match email for contact {contact.id}")
+
+        subject = f"No Job Matches Found for {contact.full_name}"
+
+        plain_message = (
+            f"Hello Molly,\n\n"
+            f"No job matches were found for candidate {contact.full_name} (ID: {contact.id}).\n\n"
+            f"Best regards,\nBeyond Academy System"
+        )
+
+        html_message = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; color: #333;">
+            <h2 style="color: #d9534f;">⚠ No Job Matches Found</h2>
+            <p>Hello Molly,</p>
+            <p>
+                Unfortunately, we could not find any job matches for 
+                <strong>{contact.full_name}</strong> (ID: <strong>{contact.id}</strong>).
+            </p>
+            <p style="margin-top: 20px;">
+                <em>Next Steps:</em>
+            </p>
+            <ul>
+                <li>Review the candidate’s profile.</li>
+                <li>Check if additional opportunities are available.</li>
+                <li>Consider updating the job search criteria.</li>
+            </ul>
+            <p style="margin-top: 20px;">
+                Best regards,<br>
+                <strong>Beyond Academy System</strong>
+            </p>
+        </body>
+        </html>
+        """
+
+        send_mail(
+            subject,
+            plain_message,  # fallback for clients that don’t support HTML
+            settings.EMAIL_HOST_USER,
+            ['molly@beyondacademy.com', 'prabhat.scaleupally@gmail.com'],
+            html_message=html_message
+        )   
     def store_matches(self, matches: List[Dict[str, Any]]) -> int:
         """
         Store job matches in the database
@@ -981,29 +976,35 @@ class JobMatcher:
                     
                     if existing_match:
                         # Update existing match
-                        existing_match.match_score = match_data['match_score']
-                        existing_match.industry_match = match_data['industry_match']
-                        existing_match.location_match = match_data['location_match']
-                        existing_match.work_policy_match = match_data['work_policy_match']
-                        existing_match.skill_match = match_data['skill_match']
-                        existing_match.matched_industries = json.dumps(match_data['matched_industries'])
-                        existing_match.matched_skills = json.dumps(match_data['matched_skills'])
-                        existing_match.match_reason = match_data['match_reason']
+                        existing_match.match_score = match_data.get('match_score', 0.0)
+                        existing_match.industry_match = match_data.get('industry_match', False)
+                        existing_match.location_match = match_data.get('location_match', False)
+                        existing_match.work_policy_match = match_data.get('work_policy_match', False)
+                        existing_match.skill_match = match_data.get('skill_match', False)
+                        existing_match.matched_skills = json.dumps(match_data.get('matched_skills', []))
+                        existing_match.match_reason = match_data.get('match_reason', '')
+                        existing_match.industry_1_match = match_data.get('industry_1_match', False)
+                        existing_match.industry_2_match = match_data.get('industry_2_match', False)
+                        existing_match.matched_industry_1 = json.dumps(match_data.get('matched_industry_1', []))
+                        existing_match.matched_industry_2 = json.dumps(match_data.get('matched_industry_2', []))
                         existing_match.status = 'active'
                         existing_match.save()
                     else:
                         # Create new match
                         JobMatch.objects.create(
-                            contact_id=match_data['contact_id'],
-                            intern_role_id=match_data['intern_role_id'],
-                            match_score=match_data['match_score'],
-                            industry_match=match_data['industry_match'],
-                            location_match=match_data['location_match'],
-                            work_policy_match=match_data['work_policy_match'],
-                            skill_match=match_data['skill_match'],
-                            matched_industries=json.dumps(match_data['matched_industries']),
-                            matched_skills=json.dumps(match_data['matched_skills']),
-                            match_reason=match_data['match_reason'],
+                            contact_id=match_data.get('contact_id'),
+                            intern_role_id=match_data.get('intern_role_id'),
+                            match_score=match_data.get('match_score', 0.0),
+                            industry_match=match_data.get('industry_match', False),
+                            location_match=match_data.get('location_match', False),
+                            work_policy_match=match_data.get('work_policy_match', False),
+                            skill_match=match_data.get('skill_match', False),
+                            matched_skills=json.dumps(match_data.get('matched_skills', [])),
+                            match_reason=match_data.get('match_reason', ''),
+                            industry_1_match=match_data.get('industry_1_match', False),
+                            industry_2_match=match_data.get('industry_2_match', False),
+                            matched_industry_1=json.dumps(match_data.get('matched_industry_1', [])),
+                            matched_industry_2=json.dumps(match_data.get('matched_industry_2', [])),
                             status='active'
                         )
                     
@@ -1150,11 +1151,11 @@ def match_jobs_for_contact(contact_id: str, min_score: float = 0.2) -> Dict[str,
                         contact_id=contact_id,
                         intern_role_id=match['intern_role_id'],
                         match_score=match['match_score'],
-                        industry_match=match['industry_match'],
-                        location_match=match['location_match'],
-                        # work_policy_match=match['work_policy_match'],
+                        industry_1_match=match['industry_1_match'],
+                        industry_2_match=match['industry_2_match'],
                         skill_match=match['skill_match'],
-                        matched_industries=json.dumps(match['matched_industries']),
+                        matched_industry_1=json.dumps(match['matched_industry_1']),
+                        matched_industry_2=json.dumps(match['matched_industry_2']),
                         matched_skills=json.dumps(match['matched_skills']),
                         match_reason=match['match_reason'],
                         status='active'

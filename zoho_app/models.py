@@ -299,30 +299,6 @@ class Deal(models.Model):
         return self.deal_name or self.id
 
 
-# class ContactDeal(models.Model):
-#     id = models.CharField(max_length=255, primary_key=True)
-#     deal_name = models.CharField(max_length=255, blank=True, null=True)
-#     description = models.TextField(blank=True, null=True)
-#     contact_id = models.CharField(max_length=255, blank=True, null=True)
-#     account_id = models.CharField(max_length=255, blank=True, null=True)
-#     account_name = models.CharField(max_length=255, blank=True, null=True)
-#     stage = models.CharField(max_length=255, blank=True, null=True)
-#     deal_type = models.CharField(max_length=255, blank=True, null=True)
-#     closing_date = models.DateTimeField(blank=True, null=True)
-#     start_date = models.DateTimeField(blank=True, null=True)
-#     end_date = models.DateTimeField(blank=True, null=True)
-#     created_time = models.DateTimeField(blank=True, null=True)
-#     modified_time = models.DateTimeField(blank=True, null=True)
-#     created_by_id = models.CharField(max_length=255, blank=True, null=True)
-#     created_by_name = models.CharField(max_length=255, blank=True, null=True)
-#     created_by_email = models.CharField(max_length=255, blank=True, null=True)
-#     created_at = models.DateTimeField(auto_now_add=True)
-#     updated_at = models.DateTimeField(auto_now=True)
-
-#     def __str__(self):
-#         return f"{self.deal_name} (Contact: {self.contact_id})" or self.id
-
-
 class Document(models.Model):
     contact_id = models.CharField(max_length=255)
     document_id = models.CharField(max_length=255)
@@ -378,15 +354,18 @@ class JobMatch(models.Model):
     location_match = models.BooleanField(default=False)
     work_policy_match = models.BooleanField(default=False)
     skill_match = models.BooleanField(default=False)
-    matched_industries = models.TextField(blank=True, null=True)
     matched_skills = models.TextField(blank=True, null=True)
     match_reason = models.TextField(blank=True, null=True)
+    industry_1_match = models.BooleanField(default=False)
+    industry_2_match = models.BooleanField(default=False)
+    matched_industry_1 = models.TextField(blank=True, null=True)
+    matched_industry_2 = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=50, default='active')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.contact_id} ↔ {self.intern_role_id} [{self.match_score}]"
+        return f"{self.contact_id} - {self.intern_role_id} [{self.match_score}]"
 
 
 class OutreachLog(models.Model):

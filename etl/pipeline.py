@@ -1142,7 +1142,7 @@ def sync_role_deals(incremental=True):
             params = {'fields': 'Deal_Name,Account_Name,Stage,Type'}
 
             try:
-                time.sleep(0.1)  # Avoid hitting rate limits
+                time.sleep(0.05)  # Avoid hitting rate limits
                 logger.debug(f"Requesting: {api_url}")
                 response = requests.get(api_url, headers=headers, params=params, timeout=30)
 
