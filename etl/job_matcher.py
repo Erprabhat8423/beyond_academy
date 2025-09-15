@@ -840,7 +840,7 @@ class JobMatcher:
         industry_1, industry_2 = self.get_contact_industries(contact)
         matches = []
 
-        roles = InternRole.objects.filter(Q(company_work_policy__icontains='Hybrid') | Q(company_work_policy__icontains='Office-based'))[:1] 
+        roles = InternRole.objects.filter(Q(company_work_policy__icontains='Hybrid') | Q(company_work_policy__icontains='Office-based')) 
         for role in roles:
             try:
                 rejected_deals_count = self.sync_role_deals(role.id)
@@ -850,6 +850,8 @@ class JobMatcher:
                 if self.check_intern_to_employee_ratio(role, contact):
                     continue
                 if self.check_active_deals_limit(role):
+                    continue
+                if self.check_location_match(contact, role) is False:
                     continue
 
                 role_tags = self.get_role_tags(role)
